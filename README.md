@@ -8,5 +8,5 @@ run as
 make
 export beta=10.
 export out_file=output.npy
-./to_omp ${beta} out_file
+./to_omp ${beta} ${out_file}
 ```
