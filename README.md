@@ -8,5 +8,6 @@ run as
 make
 export beta=10.
 export out_file=output.npy
+export OMP_NUM_THREADS=4
 ./to_omp ${beta} ${out_file}
 ```
