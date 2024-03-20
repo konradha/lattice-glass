@@ -74,16 +74,16 @@ betas_extra = betas_extra.reshape(ntries * nbetas)
 
 logger.info("Reading in data")
 
-gs_configs = []
+eq_configs = []
 for i, f in tqdm(enumerate(fnames)):
     configs = np.load(f) 
     for t in range(num_threads):
-        gs_configs.append(configs[t][-1])
+        eq_configs.append(configs[t][-1])
 
 
 # TODO: check if we _actually_ get the correct ordering like that
-gs_configs = np.array(gs_configs)
-gs_configs = gs_configs.reshape((nbetas, ntries * num_threads, L, L, L))
+eq_configs = np.array(eq_configs)
+eq_configs = eq_configs.reshape((nbetas, ntries * num_threads, L, L, L))
 
 logger.info("Calculating E, E²")
 nn = generate_nn_list(L)
@@ -91,7 +91,7 @@ e_collection, e2_collection = [], []
 for b, beta in tqdm(enumerate(betas)):
     ess, e2ss = [], []
     for t in range(ntries * num_threads):
-        config = gs_configs[b][t]
+        config = eq_configs[b][t]
         config = config.reshape(L*L*L)
         e  = energy(config, nn, L)
         #es = energy2(config, nn, L)
@@ -113,7 +113,7 @@ for b, beta in enumerate(betas):
     e_avg_all.append(e_avg)
     e2_avg_all.append(e_avg ** 2)
 
-plt.plot(1/betas, np.gradient(e_avg_all, 1/betas), label="dE")
+plt.plot(1/betas, np.gradient(np.gradient(e_avg_all, 1/betas), 1 / betas), label="dE")
 plt.legend()
 plt.show()
 
