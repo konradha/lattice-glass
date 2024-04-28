@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define L 48
+#define L 8
 #define NUM_NN 6
 #define NUM_THREADS 4
 

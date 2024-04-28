@@ -14,6 +14,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <random>
 #include <string>
@@ -199,8 +200,11 @@ void concentrated_sweep(const float th, const float &beta,
          " too hot, launching nonlocal sweep\n";
     nonlocal_sweep(L * L * L, beta, generator, indices, uni, nearest_neighbors,
                    tid);
+#ifdef DEBUG
 #pragma omp critical
     std::cout << s;
+#endif
+
     return;
   }
   constexpr int max_idx = L * L * L / 3;
@@ -306,8 +310,8 @@ void nonlocal_sweep_partitioned(const float &beta, std::mt19937 &generator,
   const int region2_end   = region1_start + partition_size - 1;
   */
 
-  if (indices(generator) % 2 == 0) {
-    for (int i = 0; i < partition_size; ++i) {
+
+  for (int i = 0; i < partition_size; ++i) {
       const int site =
           warmest_region_start + (indices(generator) % (partition_size));
       const int mv =
@@ -323,26 +327,44 @@ void nonlocal_sweep_partitioned(const float &beta, std::mt19937 &generator,
       if (dE <= 0 || uni(generator) < std::exp(-beta * dE))
         continue;
       exchange(site, mv, tid);
-    }
-  } else {
-    for (int i = 0; i < partition_size; ++i) {
-      const int site =
-          warmest_region_start + (indices(generator) % (partition_size));
-      const auto nb = indices(generator) % NUM_NN;
-      const auto mv = nearest_neighbors[NUM_NN * site + nb];
-      if (get_value_lattice(site, tid) == get_value_lattice(mv, tid))
-        continue;
-      const float E1 = nn_energy_packed(site, nearest_neighbors, tid) +
-                       nn_energy_packed(mv, nearest_neighbors, tid);
-      exchange(site, mv, tid);
-      const float E2 = nn_energy_packed(site, nearest_neighbors, tid) +
-                       nn_energy_packed(mv, nearest_neighbors, tid);
-      const float dE = E2 - E1;
-      if (dE <= 0 || uni(generator) < std::exp(-beta * dE))
-        continue;
-      exchange(site, mv, tid);
-    }
   }
+  //if (indices(generator) % 2 == 0) {
+  //  for (int i = 0; i < partition_size; ++i) {
+  //    const int site =
+  //        warmest_region_start + (indices(generator) % (partition_size));
+  //    const int mv =
+  //        coldest_region_start + (indices(generator) % (partition_size));
+  //    if (get_value_lattice(site, tid) == get_value_lattice(mv, tid))
+  //      continue;
+  //    const float E1 = nn_energy_packed(site, nearest_neighbors, tid) +
+  //                     nn_energy_packed(mv, nearest_neighbors, tid);
+  //    exchange(site, mv, tid);
+  //    const float E2 = nn_energy_packed(site, nearest_neighbors, tid) +
+  //                     nn_energy_packed(mv, nearest_neighbors, tid);
+  //    const float dE = E2 - E1;
+  //    if (dE <= 0 || uni(generator) < std::exp(-beta * dE))
+  //      continue;
+  //    exchange(site, mv, tid);
+  //  }
+  //} else {
+  //  for (int i = 0; i < partition_size; ++i) {
+  //    const int site =
+  //        warmest_region_start + (indices(generator) % (partition_size));
+  //    const auto nb = indices(generator) % NUM_NN;
+  //    const auto mv = nearest_neighbors[NUM_NN * site + nb];
+  //    if (get_value_lattice(site, tid) == get_value_lattice(mv, tid))
+  //      continue;
+  //    const float E1 = nn_energy_packed(site, nearest_neighbors, tid) +
+  //                     nn_energy_packed(mv, nearest_neighbors, tid);
+  //    exchange(site, mv, tid);
+  //    const float E2 = nn_energy_packed(site, nearest_neighbors, tid) +
+  //                     nn_energy_packed(mv, nearest_neighbors, tid);
+  //    const float dE = E2 - E1;
+  //    if (dE <= 0 || uni(generator) < std::exp(-beta * dE))
+  //      continue;
+  //    exchange(site, mv, tid);
+  //  }
+  //}
 }
 
 void local_sweep(const float &beta, std::mt19937 &generator,
@@ -369,23 +391,24 @@ void local_sweep(const float &beta, std::mt19937 &generator,
 }
 
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    std::cout << "run as: ./bin beta outfile-path\n";
+  if (argc != 5) {
+    std::cout << "run as: ./bin beta rho rho1 outfile-path\n";
     return 1;
   }
   const auto arg1 = argv[1];
   const auto arg2 = argv[2];
+  const auto arg3 = argv[3];
+  const auto arg4 = argv[4];
   const auto beta = atof(arg1);
-  const auto fname = std::string(arg2);
+  const auto fname = std::string(arg4);
 
 #pragma omp parallel
   assert(omp_get_num_threads() == NUM_THREADS);
 
-  const float rho = .75;
-  // convenience defs, it's actually rho1 = .6 and rho2 = .4
-  // ie. here rho1_used = rho1 * rho
-  const float rho1 = .45;
-  // const float rho2 = .3;
+  const float rho = atof(arg2);
+  
+  const float rho1 = atof(arg3);
+  
   const int N = (int)(lat_size * rho);
   const int N1 = (int)(rho1 * lat_size);
   const int N2 = N - N1;
@@ -406,8 +429,9 @@ int main(int argc, char **argv) {
     auto generator = std::mt19937();
     generator.seed(__rdtsc() + tid * tid);
 
-    build_lattice_diag(N, N1, N2, generator, indices, tid);
-    // build_lattice(N, N1, N2, generator, indices, tid);
+    // TODO: analysis
+    //build_lattice_diag(N, N1, N2, generator, indices, tid);
+    build_lattice(N, N1, N2, generator, indices, tid);
     uint8_t *my_lattice = thread_lattice[tid];
     int *my_nn = thread_nn[tid];
   }
@@ -445,51 +469,97 @@ int main(int argc, char **argv) {
     auto generator = std::mt19937();
     generator.seed(__rdtsc() + tid * tid);
 
+    
+    constexpr int TESTP = 10;
+    const int numsweeps_power = (beta <= 6.)? (2 * ceil(beta) + 13): 23;
+    const double delta = .05;
+    const double low_beta = 1.1 - delta;
+    // cooling rate
+    const float cliff = .1 * beta;
+    const double r = pow((double)(beta - cliff) / low_beta, low_beta / (double)((1 << (numsweeps_power - 1))));
+
+
+#pragma omp master
+    {
+      std::cout << "running " << (1 << (numsweeps_power)) << " diffusion cooling sweeps for L=" << L << "\n";
+      std::cout << "and " << (1 << (2 * TESTP + 1)) << " nonlocal sweeps\n";
+    }
+
+    int my_cpycounter;
+#pragma omp critical
+    my_cpycounter = cpycounter;
+#pragma omp barrier 
+
     uint8_t *my_lattice = thread_lattice[tid];
     int *my_nn = thread_nn[tid];
-    constexpr int TESTP = 7;
+    float curr_beta = static_cast<float>(low_beta);
+    
     // TODO: infrastructure to set power2 to something nice (cmd args??)
-    for (int d = 1; d < 2 * TESTP + 1; ++d) {
+    for (int d = 1; d < numsweeps_power; ++d) {
       auto t = -omp_get_wtime();
       for (int i = 1 << (d - 1); i < 1 << d; ++i) {
+        curr_beta *= static_cast<float>(r); 
         // nonlocal_sweep(L * L * L, beta, generator, indices, uni, my_nn, tid);
-        nonlocal_sweep_partitioned(beta, generator, indices, uni, my_nn, tid);
+        nonlocal_sweep_partitioned(curr_beta, generator, indices, uni, my_nn, tid);
       }
 
 #pragma omp master
-      std::cout << energy(my_nn, tid) << "\n";
+      {
+        std::cout << std::fixed << std::setprecision(4) << curr_beta << ": ";
+        for(int t=0;t<NUM_THREADS;++t)
+          std::cout << energy(my_nn, t) << " ";
+        std::cout << "\n";
+      }
+
+      /*
+       * const auto offset = (tid * max_collect + cpycounter) * packed_size;
+         uint8_t *copy_spot = config_collection + offset;
+         std::copy(my_lattice, my_lattice + packed_size, copy_spot);
+      */
 
       t += omp_get_wtime();
-      const auto offset = (tid * max_collect + d) * packed_size;
+      const auto offset = (tid * max_collect + my_cpycounter++) * packed_size;
       uint8_t *copy_spot = config_collection + offset;
       std::copy(my_lattice, my_lattice + packed_size, copy_spot);
+
 #pragma omp master
       cpycounter++;
 #pragma omp critical
       times[tid] += t;
     }
 
+    //if (beta > 6.) // concentrated sweeps -> get GS
+    //else if (beta > 1 - delta) // nonlocal sweeps -> max number of nonlocal sweeps, take 10⁷
+    //else // hot region, less sweeps to equilibrate
 #pragma omp master
-    std::cout << "\nstarting concentrated sweeps\n\n";
+    std::cout << "\nstarting nonlocal sweeps\n\n";
 
 #pragma omp barrier
 
+    
     for (int d = 1; d < 2 * TESTP + 1; ++d) {
       auto t = -omp_get_wtime();
       float threshold = 1;
       for (int i = 1 << (d - 1); i < 1 << d; ++i) {
         nonlocal_sweep(L * L * L, beta, generator, indices, uni, my_nn, tid);
-        concentrated_sweep(threshold, beta, generator, indices, uni, my_nn,
-                           tid);
+        //concentrated_sweep(threshold, beta, generator, indices, uni, my_nn,
+        //                   tid);
       }
 
 #pragma omp master
-      std::cout << energy(my_nn, tid) << "\n";
+      {
+        std::cout << (1 << (d-1)) << ": ";
+        for(int t=0;t<NUM_THREADS;++t)
+          std::cout << energy(my_nn, t) << " ";
+        std::cout << "\n";
+      }
+
 
       t += omp_get_wtime();
-      const auto offset = (tid * max_collect + d + 2 * TESTP) * packed_size;
+      const auto offset = (tid * max_collect + my_cpycounter++) * packed_size;
       uint8_t *copy_spot = config_collection + offset;
       std::copy(my_lattice, my_lattice + packed_size, copy_spot);
+
 #pragma omp master
       cpycounter++;
 #pragma omp critical
@@ -587,7 +657,6 @@ int main(int argc, char **argv) {
   short *serialized_configs =
       (short *)malloc(sizeof(short) * NUM_THREADS * cpycounter * L * L * L);
   for (size_t t = 0; t < NUM_THREADS; ++t) {
-
     for (size_t d = 0; d < cpycounter; ++d) {
       const auto offset = (t * max_collect + d) * packed_size;
       uint8_t *current_config = config_collection + offset;

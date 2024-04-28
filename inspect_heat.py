@@ -113,7 +113,7 @@ for b, beta in enumerate(betas):
     e_avg_all.append(e_avg)
     e2_avg_all.append(e_avg ** 2)
 
-plt.plot(1/betas, np.gradient(np.gradient(e_avg_all, 1/betas), 1 / betas), label="dE")
+plt.plot(1/betas, np.gradient(e_avg_all, 1/betas), label="dE")
 plt.legend()
 plt.show()
 
