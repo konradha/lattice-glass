@@ -3,11 +3,12 @@ This is a WIP repository to reproduce [this work](https://arxiv.org/abs/2003.028
 
 More information to follow.
 
-run as
+build and run as
 ```bash
 make
-export beta=10.
-export out_file=output.npy
 export OMP_NUM_THREADS=4
-./to_omp ${beta} ${out_file}
+./to_omp 5.0 0.58 0.29 output.npy
 ```
+
+Arguments are `beta rho rho1 out_file`, where `rho` is total particle
+density and `rho1` is the type-1 particle density.

@@ -1,10 +1,29 @@
 #include "tsc.h"
 
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <omp.h>
 #include <random>
 #include <string>
 
+#if defined(__x86_64__) || defined(_M_X64)
+#include <x86intrin.h>
+#endif
+
+static inline unsigned int rng_seed(const int salt) {
+#if defined(__x86_64__) || defined(_M_X64)
+  const uint64_t ticks = __rdtsc();
+#else
+  const auto now =
+      std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  const uint64_t ticks = static_cast<uint64_t>(now);
+#endif
+  const uint64_t mixed =
+      ticks ^ (0x9E3779B97F4A7C15ull * static_cast<uint64_t>(salt + 1));
+  return static_cast<unsigned int>(mixed ^ (mixed >> 32));
+}
 
 int main() {
   const int n = 100000;
@@ -12,7 +31,7 @@ int main() {
   auto uni = std::uniform_real_distribution<>(0., 1.);
   auto indices = std::uniform_int_distribution<>(0, L * L * L);
   auto generator = std::mt19937();
-  generator.seed(__rdtsc());
+  generator.seed(rng_seed(0));
 
   //std::random_device generator;
 
@@ -73,7 +92,7 @@ int main() {
     double * uni_sample = (double *)malloc(sizeof(double) * n);
 
     auto generator = std::mt19937();
-    generator.seed(omp_get_wtime());
+    generator.seed(rng_seed(omp_get_thread_num()));
 
     //std::random_device generator;
 
