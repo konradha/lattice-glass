@@ -12,3 +12,12 @@ export OMP_NUM_THREADS=4
 
 Arguments are `beta rho rho1 out_file`, where `rho` is total particle
 density and `rho1` is the type-1 particle density.
+
+Deterministic verification only:
+```bash
+make check
+```
+
+`make check` exercises exact species marginalisation and balanced-cluster
+detailed-balance invariants on small fixtures. It is not a production physics
+run.
