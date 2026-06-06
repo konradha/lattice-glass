@@ -21,3 +21,12 @@ make check
 `make check` exercises exact species marginalisation and balanced-cluster
 detailed-balance invariants on small fixtures. It is not a production physics
 run.
+
+Bounded balanced-cluster pilot:
+```bash
+make pilot
+```
+
+The pilot reports closure, abandonment, acceptance, cluster-size, and energy
+delta summaries on a small seeded lattice. It is a diagnostic smoke run, not a
+production sampling campaign.

@@ -12,8 +12,9 @@ SRC = sim_omp.cpp
 EXCHANGE_DELTA_TEST = tests/test_exchange_delta
 SPECIES_REDUCTION_TEST = tests/test_species_reduction
 BALANCED_CLUSTER_TEST = tests/test_balanced_cluster
+BALANCED_CLUSTER_PILOT = experiments/pilot_balanced_cluster
 
-.PHONY: all check clean
+.PHONY: all check clean pilot
 
 all: $(TARGET)
 
@@ -32,6 +33,12 @@ $(SPECIES_REDUCTION_TEST): tests/test_species_reduction.cpp species_reduction.h
 $(BALANCED_CLUSTER_TEST): tests/test_balanced_cluster.cpp balanced_cluster.h
 	$(CXX) $(CXXFLAGS) tests/test_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_TEST)
 
+$(BALANCED_CLUSTER_PILOT): experiments/pilot_balanced_cluster.cpp balanced_cluster.h
+	$(CXX) $(CXXFLAGS) experiments/pilot_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_PILOT)
+
+pilot: $(BALANCED_CLUSTER_PILOT)
+	./$(BALANCED_CLUSTER_PILOT)
+
 check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST)
 	./$(EXCHANGE_DELTA_TEST)
 	./$(SPECIES_REDUCTION_TEST)
@@ -39,4 +46,4 @@ check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST)
 	python -m unittest discover -s tests
 
 clean:
-	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST)
+	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT)
