@@ -19,6 +19,8 @@ BALANCED_CLUSTER_PILOT = experiments/pilot_balanced_cluster
 CLUSTER_DIAGNOSTICS = experiments/cluster_diagnostics
 REFERENCE_CANCELLATION_TEST = tests/test_reference_cancellation
 FP_EFFICIENCY = experiments/fp_efficiency
+COLLECTIVE_MOVES_TEST = tests/test_collective_moves
+OCCUPANCY_EFFICIENCY = experiments/occupancy_efficiency
 
 .PHONY: all check clean pilot diag fpbench
 
@@ -51,6 +53,12 @@ $(REFERENCE_CANCELLATION_TEST): tests/test_reference_cancellation.cpp fp_sampler
 $(FP_EFFICIENCY): experiments/fp_efficiency.cpp fp_sampler.h balanced_cluster.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/fp_efficiency.cpp $(LDFLAGS) $(LDLIBS) -o $(FP_EFFICIENCY)
 
+$(COLLECTIVE_MOVES_TEST): tests/test_collective_moves.cpp collective_moves.h fp_sampler.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_collective_moves.cpp $(LDFLAGS) $(LDLIBS) -o $(COLLECTIVE_MOVES_TEST)
+
+$(OCCUPANCY_EFFICIENCY): experiments/occupancy_efficiency.cpp fp_sampler.h collective_moves.h species_reduction.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/occupancy_efficiency.cpp $(LDFLAGS) $(LDLIBS) -o $(OCCUPANCY_EFFICIENCY)
+
 diag: $(CLUSTER_DIAGNOSTICS)
 	./$(CLUSTER_DIAGNOSTICS)
 
@@ -60,12 +68,13 @@ fpbench: $(FP_EFFICIENCY)
 pilot: $(BALANCED_CLUSTER_PILOT)
 	./$(BALANCED_CLUSTER_PILOT)
 
-check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(REFERENCE_CANCELLATION_TEST)
+check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(REFERENCE_CANCELLATION_TEST) $(COLLECTIVE_MOVES_TEST)
 	./$(EXCHANGE_DELTA_TEST)
 	./$(SPECIES_REDUCTION_TEST)
 	./$(BALANCED_CLUSTER_TEST)
 	./$(REFERENCE_CANCELLATION_TEST)
+	./$(COLLECTIVE_MOVES_TEST)
 	python -m unittest discover -s tests
 
 clean:
-	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY)
+	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY)

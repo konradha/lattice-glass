@@ -185,10 +185,44 @@ static void test_rao_blackwell_overlap_matches_enumeration() {
   assert_close(rb, numerator / denominator);
 }
 
+static void test_rao_blackwell_energy_matches_enumeration() {
+  const std::vector<int> nn = ring_neighbors(8);
+  const long double beta = 0.6L;
+  const std::vector<uint8_t> occ = {1, 1, 0, 1, 1, 0, 1, 1};
+  const int num_type1 = 3;
+
+  const auto stats = species::compute_occupancy_stats(occ, nn.data(), 2);
+  const long double rb = species::rao_blackwell_energy(stats, beta, num_type1);
+
+  const auto weights = species::species_weights(beta);
+  std::vector<long double> site_weights(occ.size(), 0.0L);
+  for (int site = 0; site < static_cast<int>(occ.size()); ++site)
+    site_weights[site] = weights[stats.neighbor_counts[site]];
+
+  const auto assignments = enumerate_assignments(occ, site_weights, num_type1);
+  long double numerator = 0.0L;
+  long double denominator = 0.0L;
+  for (const auto &a : assignments) {
+    long double h = 0.0L;
+    for (int site = 0; site < static_cast<int>(occ.size()); ++site) {
+      if (a.assignment[site] == species::kEmpty)
+        continue;
+      const int m = stats.neighbor_counts[site];
+      const int l = a.assignment[site] == species::kType1 ? 3 : 5;
+      h += static_cast<long double>((m - l) * (m - l));
+    }
+    numerator += a.weight * h;
+    denominator += a.weight;
+  }
+
+  assert_close(rb, numerator / denominator);
+}
+
 int main() {
   test_partition_and_marginals_match_enumeration();
   test_occupancy_stats_and_sampler_preserve_sector();
   test_rao_blackwell_overlap_matches_enumeration();
+  test_rao_blackwell_energy_matches_enumeration();
   std::cout << "species reduction tests passed\n";
   return 0;
 }

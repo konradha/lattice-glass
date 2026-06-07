@@ -284,6 +284,37 @@ inline std::vector<uint8_t> sample_species_given_occupancy(
   return sample;
 }
 
+// Exact Rao-Blackwellised energy: the conditional mean of H given the
+// occupancy field, integrating out the species labels exactly.
+//   E[H | n] = sum_{occupied i} [ P_i(a) (m_i - 3)^2 + P_i(b) (m_i - 5)^2 ],
+// with m_i the occupied-neighbour count and P_i the exact one-site species
+// marginals. O(N_p N_a); replaces the species-dependent energy by its
+// conditional expectation (Rao-Blackwell, strictly non-increasing variance).
+inline long double rao_blackwell_energy(const OccupancyStats &stats,
+                                        const long double beta,
+                                        const int num_type1) {
+  const auto marginals = site_type1_marginals(stats, beta, num_type1);
+  long double energy = 0.0L;
+  for (const int site : stats.occupied_sites) {
+    const int m = stats.neighbor_counts[site];
+    const long double p_type1 = marginals[site];
+    const long double e_type1 = static_cast<long double>((m - 3) * (m - 3));
+    const long double e_type2 = static_cast<long double>((m - 5) * (m - 5));
+    energy += p_type1 * e_type1 + (1.0L - p_type1) * e_type2;
+  }
+  return energy;
+}
+
+inline long double rao_blackwell_energy(const std::vector<uint8_t> &occupancy,
+                                        const int *nearest_neighbors,
+                                        const int num_neighbors,
+                                        const long double beta,
+                                        const int num_type1) {
+  const OccupancyStats stats =
+      compute_occupancy_stats(occupancy, nearest_neighbors, num_neighbors);
+  return rao_blackwell_energy(stats, beta, num_type1);
+}
+
 inline long double rao_blackwell_site_overlap(
     const uint8_t occ1, const long double type1_probability1,
     const uint8_t occ2, const long double type1_probability2) {
