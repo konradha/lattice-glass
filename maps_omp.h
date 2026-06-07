@@ -5,9 +5,17 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#ifndef L
 #define L 8
+#endif
+
+#ifndef NUM_NN
 #define NUM_NN 6
+#endif
+
+#ifndef NUM_THREADS
 #define NUM_THREADS 4
+#endif
 
 constexpr int lat_size = L * L * L;
 constexpr int pad_size = 128;

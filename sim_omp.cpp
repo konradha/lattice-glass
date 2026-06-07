@@ -7,6 +7,7 @@
  */
 
 #include "maps_omp.h"
+#include "compare_mode.h"
 #include "npy.hpp"
 
 #include <algorithm>
@@ -352,6 +353,9 @@ void local_sweep(const float &beta, std::mt19937 &generator,
 
 #ifndef LATTICE_GLASS_NO_MAIN
 int main(int argc, char **argv) {
+  if (argc > 2 && std::string(argv[1]) == "--mode" &&
+      std::string(argv[2]) == "compare")
+    return lattice_glass::compare::run_compare_mode(argc, argv);
   if (argc != 5) {
     std::cout << "run as: ./bin beta rho rho1 outfile-path\n";
     return 1;

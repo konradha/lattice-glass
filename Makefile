@@ -1,5 +1,8 @@
 CXX ?= clang++-17
+CPPFLAGS ?=
 CXXFLAGS ?= -I. -ftree-vectorize -pedantic -ffast-math -march=native -O3 -Wall -Wunknown-pragmas -fopenmp -std=c++17
+# Tests rely on assert(); keep them enabled even when the environment injects -DNDEBUG.
+TESTFLAGS = -UNDEBUG
 LDFLAGS ?=
 LDLIBS ?= -lm -lstdc++
 
@@ -18,23 +21,23 @@ BALANCED_CLUSTER_PILOT = experiments/pilot_balanced_cluster
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) maps_omp.h npy.hpp tsc.h
-	$(CXX) $(CXXFLAGS) $(SRC) $(LDFLAGS) $(LDLIBS) -o $(TARGET)
+$(TARGET): $(SRC) maps_omp.h npy.hpp tsc.h compare_mode.h balanced_cluster.h species_reduction.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(SRC) $(LDFLAGS) $(LDLIBS) -o $(TARGET)
 
 measure_rng: measure_rng.cpp tsc.h
-	$(CXX) $(CXXFLAGS) measure_rng.cpp $(LDFLAGS) $(LDLIBS) -o measure_rng
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) measure_rng.cpp $(LDFLAGS) $(LDLIBS) -o measure_rng
 
 $(EXCHANGE_DELTA_TEST): tests/test_exchange_delta.cpp $(SRC) maps_omp.h npy.hpp
-	$(CXX) $(CXXFLAGS) tests/test_exchange_delta.cpp $(LDFLAGS) $(LDLIBS) -o $(EXCHANGE_DELTA_TEST)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_exchange_delta.cpp $(LDFLAGS) $(LDLIBS) -o $(EXCHANGE_DELTA_TEST)
 
 $(SPECIES_REDUCTION_TEST): tests/test_species_reduction.cpp species_reduction.h
-	$(CXX) $(CXXFLAGS) tests/test_species_reduction.cpp $(LDFLAGS) $(LDLIBS) -o $(SPECIES_REDUCTION_TEST)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_species_reduction.cpp $(LDFLAGS) $(LDLIBS) -o $(SPECIES_REDUCTION_TEST)
 
 $(BALANCED_CLUSTER_TEST): tests/test_balanced_cluster.cpp balanced_cluster.h
-	$(CXX) $(CXXFLAGS) tests/test_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_TEST)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_TEST)
 
 $(BALANCED_CLUSTER_PILOT): experiments/pilot_balanced_cluster.cpp balanced_cluster.h
-	$(CXX) $(CXXFLAGS) experiments/pilot_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_PILOT)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/pilot_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_PILOT)
 
 pilot: $(BALANCED_CLUSTER_PILOT)
 	./$(BALANCED_CLUSTER_PILOT)

@@ -30,3 +30,16 @@ make pilot
 The pilot reports closure, abandonment, rejection, acceptance, size-bucket,
 boundary-size, and energy-delta summaries on a small seeded lattice with
 `L >= 8`. It is a diagnostic smoke run, not a production sampling campaign.
+
+Kernel comparison harness (two same-temperature replicas):
+```bash
+make
+./to_omp --mode compare --kernel heatbath --beta 2.0 --rho 0.75 --rho1 0.30 \
+  --sweeps 40000 --warmup 10000 --sample-every 50 --heatbath-every 10
+```
+
+`--kernel` is `base | heatbath | cluster`. Compare mode reports local
+acceptance, species heat-bath and cluster usage, and the integrated
+autocorrelation time and effective sample count of both the energy and the
+Rao-Blackwellised replica overlap. Build with `make CPPFLAGS=-DL=10` (or any
+even `L`) to change the lattice size.
