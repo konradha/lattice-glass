@@ -1,12 +1,24 @@
 // Tests the balanced replica cluster move in its intended regime: two
-// equilibrated replicas whose disagreement set D concentrates on mobile
-// regions. Reports D, cluster closure/acceptance, and E[dE | |C|] / boundary
-// scaling, with a random-configuration control at the same composition.
+// replicas whose disagreement set D concentrates on mobile regions.
+//
+// Two coupling settings are supported:
+//   epsilon == 0 : free independent replicas (control).
+//   epsilon  > 0 : both replicas symmetrically coupled to a common quenched
+//                  equilibrium reference s0 via +eps * (#agreeing sites).
+//
+// The reference coupling is symmetric under the replica exchange, so it
+// cancels in the cluster acceptance (still min(1, exp(-beta dH))) and only
+// biases the base moves. This lets us test whether a concentrated D yields
+// softer, acceptable clusters without breaking detailed balance.
+//
+// Reports: overlaps, disagreement set size, cluster closure/acceptance, and
+// E[dH | |C|] / boundary scaling, with a random-configuration control.
 
 #include "../balanced_cluster.h"
 #include "../species_reduction.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -27,10 +39,12 @@ struct Options {
   long double beta = 2.0L;
   long double rho = 0.75L;
   long double rho1 = 0.30L;
-  int equil_sweeps = 40000;
-  int decorrelate_sweeps = 4000;
-  int rounds = 3;
-  int growth_samples = 4000;
+  long double epsilon = 0.0L;
+  int equil_sweeps = 8000;
+  int ref_equil_sweeps = 8000;
+  int decorrelate_sweeps = 1500;
+  int rounds = 2;
+  int growth_samples = 2000;
   int cluster_max_size = 32;
   long double kappa = 0.5L;
   int heatbath_every = 200;
@@ -72,8 +86,12 @@ static Options parse_options(int argc, char **argv) {
       o.rho = parse_ld(value);
     else if (key == "--rho1")
       o.rho1 = parse_ld(value);
+    else if (key == "--epsilon")
+      o.epsilon = parse_ld(value);
     else if (key == "--equil-sweeps")
       o.equil_sweeps = parse_int(value);
+    else if (key == "--ref-equil-sweeps")
+      o.ref_equil_sweeps = parse_int(value);
     else if (key == "--decorrelate-sweeps")
       o.decorrelate_sweeps = parse_int(value);
     else if (key == "--rounds")
@@ -95,6 +113,8 @@ static Options parse_options(int argc, char **argv) {
     throw std::invalid_argument("L must be at least 8");
   if (o.beta < 0.0L)
     throw std::invalid_argument("beta must be non-negative");
+  if (o.epsilon < 0.0L)
+    throw std::invalid_argument("epsilon must be non-negative");
   if (o.rho < 0.0L || o.rho > 1.0L)
     throw std::invalid_argument("rho must be in [0,1]");
   if (o.rho1 < 0.0L || o.rho1 > o.rho)
@@ -154,7 +174,6 @@ static long double total_energy_int(const std::vector<uint8_t> &lattice,
   return energy;
 }
 
-// Energy contribution of the two swapped sites plus their neighbourhoods.
 static int swap_region_energy(const std::vector<uint8_t> &lattice, int a, int b,
                               const int *nn) {
   int affected[14];
@@ -177,9 +196,12 @@ static int swap_region_energy(const std::vector<uint8_t> &lattice, int a, int b,
   return energy;
 }
 
-static int nonlocal_swap_sweep(std::vector<uint8_t> &lattice,
-                               long double beta, std::mt19937 &gen,
-                               const int *nn) {
+// One sweep of random-pair exchanges with Metropolis on the field-tilted
+// effective energy E_eff = H - epsilon * (#sites agreeing with reference).
+static int nonlocal_swap_sweep(std::vector<uint8_t> &lattice, long double beta,
+                               long double epsilon,
+                               const std::vector<uint8_t> *reference,
+                               std::mt19937 &gen, const int *nn) {
   const int lat_size = static_cast<int>(lattice.size());
   std::uniform_int_distribution<int> site_dist(0, lat_size - 1);
   std::uniform_real_distribution<double> uni(0.0, 1.0);
@@ -189,12 +211,25 @@ static int nonlocal_swap_sweep(std::vector<uint8_t> &lattice,
     const int b = site_dist(gen);
     if (lattice[a] == lattice[b])
       continue;
+
     const int before = swap_region_energy(lattice, a, b, nn);
+    int field_delta = 0; // change in (#agreeing sites) under the swap
+    if (reference != nullptr) {
+      const uint8_t ra = (*reference)[a];
+      const uint8_t rb = (*reference)[b];
+      const int agree_before = (lattice[a] == ra) + (lattice[b] == rb);
+      const int agree_after = (lattice[b] == ra) + (lattice[a] == rb);
+      field_delta = agree_after - agree_before;
+    }
     std::swap(lattice[a], lattice[b]);
     const int after = swap_region_energy(lattice, a, b, nn);
-    const int delta = after - before;
-    if (delta <= 0 ||
-        uni(gen) < std::exp(-static_cast<double>(beta) * delta)) {
+
+    // dE_eff = dH - epsilon * d(agreement)
+    const long double delta =
+        static_cast<long double>(after - before) -
+        epsilon * static_cast<long double>(field_delta);
+    if (delta <= 0.0L ||
+        uni(gen) < std::exp(-static_cast<double>(beta * delta))) {
       ++accepted;
     } else {
       std::swap(lattice[a], lattice[b]);
@@ -204,15 +239,26 @@ static int nonlocal_swap_sweep(std::vector<uint8_t> &lattice,
 }
 
 static void equilibrate(std::vector<uint8_t> &lattice, long double beta,
-                        int sweeps, int num_type1, int heatbath_every,
-                        std::mt19937 &gen, std::mt19937 &heat_gen,
-                        const std::vector<int> &nn) {
+                        long double epsilon,
+                        const std::vector<uint8_t> *reference, int sweeps,
+                        int num_type1, int heatbath_every, std::mt19937 &gen,
+                        std::mt19937 &heat_gen, const std::vector<int> &nn) {
   for (int sweep = 1; sweep <= sweeps; ++sweep) {
-    nonlocal_swap_sweep(lattice, beta, gen, nn.data());
-    if (heatbath_every > 0 && sweep % heatbath_every == 0)
+    nonlocal_swap_sweep(lattice, beta, epsilon, reference, gen, nn.data());
+    // The exact species heat bath targets the field-free conditional law,
+    // so it is only valid (and only used) when there is no reference field.
+    if (epsilon == 0.0L && heatbath_every > 0 && sweep % heatbath_every == 0)
       lattice = species::sample_species_given_occupancy(
           lattice, nn.data(), 6, beta, num_type1, heat_gen);
   }
+}
+
+static int agreement_count(const std::vector<uint8_t> &a,
+                           const std::vector<uint8_t> &b) {
+  int count = 0;
+  for (int site = 0; site < static_cast<int>(a.size()); ++site)
+    count += a[site] == b[site];
+  return count;
 }
 
 static int disagreement_count(const cluster::ReplicaPair &pair) {
@@ -245,7 +291,8 @@ static const char *bucket_name(int b) {
 }
 
 // Measures cluster-growth statistics on a FIXED pair without accepting moves,
-// so the disagreement set stays constant across all samples.
+// so the disagreement set stays constant across all samples. The field cancels
+// in the cluster acceptance, so accept-prob uses min(1, exp(-beta dH)).
 static Diagnostics measure(cluster::ReplicaPair &pair,
                            const std::vector<int> &nn, const Options &o,
                            const cluster::GrowthRule &rule, std::mt19937 &gen) {
@@ -381,8 +428,10 @@ int main(int argc, char **argv) {
 
     const std::vector<int> nn = cubic_neighbors(o.L);
 
+    std::mt19937 gen0(o.seed ^ 0x51ED2701u);
     std::mt19937 gen1(o.seed);
     std::mt19937 gen2(o.seed ^ 0x9E3779B9u);
+    std::mt19937 heat0(o.seed ^ 0x1B56C4E9u);
     std::mt19937 heat1(o.seed ^ 0x85EBCA6Bu);
     std::mt19937 heat2(o.seed ^ 0xC2B2AE35u);
     std::mt19937 growth_gen(o.seed ^ 0x27D4EB2Fu);
@@ -393,6 +442,7 @@ int main(int argc, char **argv) {
     std::cout << std::setprecision(8);
     std::cout << "diag.L " << o.L << "\n";
     std::cout << "diag.beta " << static_cast<double>(o.beta) << "\n";
+    std::cout << "diag.epsilon " << static_cast<double>(o.epsilon) << "\n";
     std::cout << "diag.rho " << static_cast<double>(o.rho) << "\n";
     std::cout << "diag.rho1 " << static_cast<double>(o.rho1) << "\n";
     std::cout << "diag.equil_sweeps " << o.equil_sweeps << "\n";
@@ -411,32 +461,61 @@ int main(int argc, char **argv) {
                       total_energy_int(random_pair.second, nn.data())) /
                      2.0L)
               << "\n";
-    const Diagnostics random_diag =
-        measure(random_pair, nn, o, rule, growth_gen);
-    print_diag("random", random_diag, lat_size);
+    print_diag("random", measure(random_pair, nn, o, rule, growth_gen),
+               lat_size);
 
-    // Relaxed: equilibrate both replicas, then measure over several rounds.
+    // Quenched reference: an equilibrium configuration of the plain model.
+    std::vector<uint8_t> reference =
+        random_lattice(num_type1, num_type2, lat_size, gen0);
+    equilibrate(reference, o.beta, 0.0L, nullptr, o.ref_equil_sweeps, num_type1,
+                o.heatbath_every, gen0, heat0, nn);
+    std::cout << "reference.energy "
+              << static_cast<double>(total_energy_int(reference, nn.data()))
+              << "\n";
+
+    const std::vector<uint8_t> *ref_ptr =
+        o.epsilon > 0.0L ? &reference : nullptr;
+
+    // Two dynamical replicas, both symmetrically coupled to the reference.
     cluster::ReplicaPair pair;
     pair.first = random_lattice(num_type1, num_type2, lat_size, gen1);
     pair.second = random_lattice(num_type1, num_type2, lat_size, gen2);
-    equilibrate(pair.first, o.beta, o.equil_sweeps, num_type1, o.heatbath_every,
-                gen1, heat1, nn);
-    equilibrate(pair.second, o.beta, o.equil_sweeps, num_type1, o.heatbath_every,
-                gen2, heat2, nn);
+    equilibrate(pair.first, o.beta, o.epsilon, ref_ptr, o.equil_sweeps,
+                num_type1, o.heatbath_every, gen1, heat1, nn);
+    equilibrate(pair.second, o.beta, o.epsilon, ref_ptr, o.equil_sweeps,
+                num_type1, o.heatbath_every, gen2, heat2, nn);
+
     std::cout << "relaxed.energy "
               << static_cast<double>(
                      (total_energy_int(pair.first, nn.data()) +
                       total_energy_int(pair.second, nn.data())) /
                      2.0L)
               << "\n";
+    std::cout << "relaxed.overlap_ref_first "
+              << static_cast<long double>(
+                     agreement_count(pair.first, reference)) /
+                     lat_size
+              << "\n";
+    std::cout << "relaxed.overlap_ref_second "
+              << static_cast<long double>(
+                     agreement_count(pair.second, reference)) /
+                     lat_size
+              << "\n";
+    std::cout << "relaxed.overlap_mutual "
+              << static_cast<long double>(
+                     agreement_count(pair.first, pair.second)) /
+                     lat_size
+              << "\n";
 
     std::vector<Diagnostics> rounds;
     for (int round = 0; round < o.rounds; ++round) {
       if (round > 0) {
-        equilibrate(pair.first, o.beta, o.decorrelate_sweeps, num_type1,
-                    o.heatbath_every, gen1, heat1, nn);
-        equilibrate(pair.second, o.beta, o.decorrelate_sweeps, num_type1,
-                    o.heatbath_every, gen2, heat2, nn);
+        equilibrate(pair.first, o.beta, o.epsilon, ref_ptr,
+                    o.decorrelate_sweeps, num_type1, o.heatbath_every, gen1,
+                    heat1, nn);
+        equilibrate(pair.second, o.beta, o.epsilon, ref_ptr,
+                    o.decorrelate_sweeps, num_type1, o.heatbath_every, gen2,
+                    heat2, nn);
       }
       rounds.push_back(measure(pair, nn, o, rule, growth_gen));
     }
