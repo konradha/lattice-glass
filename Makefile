@@ -16,8 +16,9 @@ EXCHANGE_DELTA_TEST = tests/test_exchange_delta
 SPECIES_REDUCTION_TEST = tests/test_species_reduction
 BALANCED_CLUSTER_TEST = tests/test_balanced_cluster
 BALANCED_CLUSTER_PILOT = experiments/pilot_balanced_cluster
+CLUSTER_DIAGNOSTICS = experiments/cluster_diagnostics
 
-.PHONY: all check clean pilot
+.PHONY: all check clean pilot diag
 
 all: $(TARGET)
 
@@ -39,6 +40,12 @@ $(BALANCED_CLUSTER_TEST): tests/test_balanced_cluster.cpp balanced_cluster.h
 $(BALANCED_CLUSTER_PILOT): experiments/pilot_balanced_cluster.cpp balanced_cluster.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/pilot_balanced_cluster.cpp $(LDFLAGS) $(LDLIBS) -o $(BALANCED_CLUSTER_PILOT)
 
+$(CLUSTER_DIAGNOSTICS): experiments/cluster_diagnostics.cpp balanced_cluster.h species_reduction.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/cluster_diagnostics.cpp $(LDFLAGS) $(LDLIBS) -o $(CLUSTER_DIAGNOSTICS)
+
+diag: $(CLUSTER_DIAGNOSTICS)
+	./$(CLUSTER_DIAGNOSTICS)
+
 pilot: $(BALANCED_CLUSTER_PILOT)
 	./$(BALANCED_CLUSTER_PILOT)
 
@@ -49,4 +56,4 @@ check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST)
 	python -m unittest discover -s tests
 
 clean:
-	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT)
+	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS)
