@@ -11,6 +11,7 @@
 
 #include "../collective_moves.h"
 #include "../fp_sampler.h"
+#include "../lifted_vacancy.h"
 #include "../species_reduction.h"
 
 #include <chrono>
@@ -25,6 +26,7 @@
 namespace fp = lattice_glass::fp;
 namespace collective = lattice_glass::collective;
 namespace species = lattice_glass::species;
+namespace lifted = lattice_glass::lifted;
 
 struct Options {
   int L = 10;
@@ -91,18 +93,25 @@ static Options parse_options(int argc, char **argv) {
   return o;
 }
 
+enum class Mode { Swap, SwapChain, SwapLifted };
+
 static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
-                         int num_type1, int num_type2, bool use_chain,
+                         int num_type1, int num_type2, Mode mode,
                          std::mt19937 &gen) {
   const int lat_size = o.L * o.L * o.L;
   std::vector<uint8_t> lattice =
       fp::random_lattice(num_type1, num_type2, lat_size, gen);
 
+  const long long lifted_events = static_cast<long long>(lat_size);
+  const int lifted_refresh = 2 * o.L;
   for (int s = 0; s < o.warmup; ++s) {
     fp::nonlocal_swap_sweep(lattice, o.beta, 0.0L, nullptr, gen, nn.data());
-    if (use_chain)
+    if (mode == Mode::SwapChain)
       collective::vacancy_chain_sweep(lattice, o.beta, o.k_max,
                                       o.chain_attempts, gen, nn.data());
+    else if (mode == Mode::SwapLifted)
+      lifted::lifted_vacancy_chain(lattice, o.beta, lifted_events,
+                                   lifted_refresh, gen, nn.data());
   }
 
   std::vector<long double> plain, rb;
@@ -110,11 +119,16 @@ static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
   const auto t0 = std::chrono::steady_clock::now();
   for (int s = 1; s <= o.production; ++s) {
     fp::nonlocal_swap_sweep(lattice, o.beta, 0.0L, nullptr, gen, nn.data());
-    if (use_chain) {
+    if (mode == Mode::SwapChain) {
       const collective::SweepStats cs = collective::vacancy_chain_sweep(
           lattice, o.beta, o.k_max, o.chain_attempts, gen, nn.data());
       result.chain_attempts += cs.attempts;
       result.chain_accepted += cs.accepted;
+    } else if (mode == Mode::SwapLifted) {
+      const lifted::EventStats ls = lifted::lifted_vacancy_chain(
+          lattice, o.beta, lifted_events, lifted_refresh, gen, nn.data());
+      result.chain_attempts += ls.events;
+      result.chain_accepted += ls.accepted;
     }
     if (s % o.sample_every == 0) {
       plain.push_back(fp::total_energy_int(lattice, nn.data()));
@@ -176,11 +190,16 @@ int main(int argc, char **argv) {
     std::cout << "occ.k_max " << o.k_max << "\n";
     std::cout << "occ.chain_attempts " << o.chain_attempts << "\n";
 
-    const ArmResult swap = run_arm(o, nn, num_type1, num_type2, false, swap_gen);
+    const ArmResult swap =
+        run_arm(o, nn, num_type1, num_type2, Mode::Swap, swap_gen);
     print_arm("swap", swap);
     const ArmResult swapchain =
-        run_arm(o, nn, num_type1, num_type2, true, chain_gen);
+        run_arm(o, nn, num_type1, num_type2, Mode::SwapChain, chain_gen);
     print_arm("swapchain", swapchain);
+    std::mt19937 lifted_gen(o.seed ^ 0x1B56C4E9u);
+    const ArmResult swaplifted =
+        run_arm(o, nn, num_type1, num_type2, Mode::SwapLifted, lifted_gen);
+    print_arm("swaplifted", swaplifted);
 
     auto speedup = [&](const fp::AutocorrResult &b, const fp::AutocorrResult &c,
                        const ArmResult &ba, const ArmResult &ca) {
@@ -192,6 +211,10 @@ int main(int argc, char **argv) {
               << speedup(swap.plain, swapchain.plain, swap, swapchain) << "\n";
     std::cout << "speedup.rb_energy_ess_per_sec "
               << speedup(swap.rb, swapchain.rb, swap, swapchain) << "\n";
+    std::cout << "speedup.lifted_plain_energy_ess_per_sec "
+              << speedup(swap.plain, swaplifted.plain, swap, swaplifted) << "\n";
+    std::cout << "speedup.lifted_rb_energy_ess_per_sec "
+              << speedup(swap.rb, swaplifted.rb, swap, swaplifted) << "\n";
     // RB-vs-plain measurement gain on the baseline (provable, dynamics-free).
     std::cout << "rb_measurement_gain.ess_per_sec "
               << (ess_per_sec(swap, swap.plain) > 0.0

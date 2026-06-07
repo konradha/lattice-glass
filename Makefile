@@ -21,6 +21,7 @@ REFERENCE_CANCELLATION_TEST = tests/test_reference_cancellation
 FP_EFFICIENCY = experiments/fp_efficiency
 COLLECTIVE_MOVES_TEST = tests/test_collective_moves
 OCCUPANCY_EFFICIENCY = experiments/occupancy_efficiency
+LIFTED_VACANCY_TEST = tests/test_lifted_vacancy
 
 .PHONY: all check clean pilot diag fpbench
 
@@ -56,8 +57,11 @@ $(FP_EFFICIENCY): experiments/fp_efficiency.cpp fp_sampler.h balanced_cluster.h
 $(COLLECTIVE_MOVES_TEST): tests/test_collective_moves.cpp collective_moves.h fp_sampler.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_collective_moves.cpp $(LDFLAGS) $(LDLIBS) -o $(COLLECTIVE_MOVES_TEST)
 
-$(OCCUPANCY_EFFICIENCY): experiments/occupancy_efficiency.cpp fp_sampler.h collective_moves.h species_reduction.h
+$(OCCUPANCY_EFFICIENCY): experiments/occupancy_efficiency.cpp fp_sampler.h collective_moves.h lifted_vacancy.h species_reduction.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/occupancy_efficiency.cpp $(LDFLAGS) $(LDLIBS) -o $(OCCUPANCY_EFFICIENCY)
+
+$(LIFTED_VACANCY_TEST): tests/test_lifted_vacancy.cpp lifted_vacancy.h fp_sampler.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_lifted_vacancy.cpp $(LDFLAGS) $(LDLIBS) -o $(LIFTED_VACANCY_TEST)
 
 diag: $(CLUSTER_DIAGNOSTICS)
 	./$(CLUSTER_DIAGNOSTICS)
@@ -68,13 +72,14 @@ fpbench: $(FP_EFFICIENCY)
 pilot: $(BALANCED_CLUSTER_PILOT)
 	./$(BALANCED_CLUSTER_PILOT)
 
-check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(REFERENCE_CANCELLATION_TEST) $(COLLECTIVE_MOVES_TEST)
+check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(REFERENCE_CANCELLATION_TEST) $(COLLECTIVE_MOVES_TEST) $(LIFTED_VACANCY_TEST)
 	./$(EXCHANGE_DELTA_TEST)
 	./$(SPECIES_REDUCTION_TEST)
 	./$(BALANCED_CLUSTER_TEST)
 	./$(REFERENCE_CANCELLATION_TEST)
 	./$(COLLECTIVE_MOVES_TEST)
+	./$(LIFTED_VACANCY_TEST)
 	python -m unittest discover -s tests
 
 clean:
-	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY)
+	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY) $(LIFTED_VACANCY_TEST)
