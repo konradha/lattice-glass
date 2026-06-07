@@ -14,9 +14,9 @@
 namespace cluster = lattice_glass::cluster;
 
 struct Options {
-  int L = 4;
-  int steps = 20000;
-  int max_cluster = 64;
+  int L = 8;
+  int steps = 10000;
+  int max_cluster = 128;
   unsigned int seed = 20260606;
   long double beta = 5.0L;
   long double kappa = 0.0L;
@@ -24,16 +24,32 @@ struct Options {
   long double rho1 = 0.30L;
 };
 
+struct BucketStats {
+  int proposed = 0;
+  int accepted = 0;
+  long double delta_sum = 0.0L;
+  long double boundary_sum = 0.0L;
+};
+
 struct PilotStats {
   int attempts = 0;
   int proposed = 0;
   int abandoned = 0;
   int accepted = 0;
+  int rejected = 0;
+  int initial_disagreements = 0;
+  int final_disagreements = 0;
   long double proposed_size_sum = 0.0L;
   long double accepted_size_sum = 0.0L;
+  long double proposed_boundary_sum = 0.0L;
+  long double accepted_boundary_sum = 0.0L;
   long double proposed_delta_sum = 0.0L;
   long double accepted_delta_sum = 0.0L;
+  std::vector<BucketStats> size_buckets;
 };
+
+static constexpr int kMinPilotL = 8;
+static constexpr int kNumSizeBuckets = 8;
 
 static int parse_int(const char *value) { return std::stoi(std::string(value)); }
 
@@ -72,8 +88,8 @@ static Options parse_options(const int argc, char **argv) {
       throw std::invalid_argument("unknown option " + key);
   }
 
-  if (options.L <= 1)
-    throw std::invalid_argument("L must be greater than one");
+  if (options.L < kMinPilotL)
+    throw std::invalid_argument("pilot L must be at least 8");
   if (options.steps <= 0)
     throw std::invalid_argument("steps must be positive");
   if (options.max_cluster <= 0)
@@ -130,8 +146,48 @@ static std::vector<uint8_t> random_lattice(const Options &options,
   return lattice;
 }
 
+static int disagreement_count(const cluster::ReplicaPair &pair) {
+  int count = 0;
+  for (int site = 0; site < static_cast<int>(pair.first.size()); ++site)
+    count += pair.first[site] != pair.second[site];
+  return count;
+}
+
+static int size_bucket_index(const int size) {
+  if (size <= 2)
+    return 0;
+  if (size <= 4)
+    return 1;
+  if (size <= 8)
+    return 2;
+  if (size <= 16)
+    return 3;
+  if (size <= 32)
+    return 4;
+  if (size <= 64)
+    return 5;
+  if (size <= 128)
+    return 6;
+  return 7;
+}
+
+static const char *size_bucket_name(const int bucket) {
+  static const char *names[kNumSizeBuckets] = {"le2",   "3_4",   "5_8",
+                                               "9_16", "17_32", "33_64",
+                                               "65_128", "gt128"};
+  return names[bucket];
+}
+
+static int boundary_size(const std::vector<int> &cluster_sites,
+                         const std::vector<int> &nearest_neighbors) {
+  const std::vector<int> affected =
+      cluster::cluster_affected_sites(cluster_sites, nearest_neighbors.data(), 6);
+  return static_cast<int>(affected.size() - cluster_sites.size());
+}
+
 static void add_result(PilotStats &stats, const cluster::GrowthAttempt &attempt,
-                       const bool accepted, const long double delta_energy) {
+                       const bool accepted, const long double delta_energy,
+                       const int boundary) {
   stats.attempts++;
   if (attempt.abandoned) {
     stats.abandoned++;
@@ -140,13 +196,26 @@ static void add_result(PilotStats &stats, const cluster::GrowthAttempt &attempt,
   if (!attempt.proposed)
     return;
 
+  const int cluster_size = static_cast<int>(attempt.cluster_sites.size());
+  const int bucket_index = size_bucket_index(cluster_size);
+  BucketStats &bucket = stats.size_buckets[bucket_index];
+
   stats.proposed++;
-  stats.proposed_size_sum += attempt.cluster_sites.size();
+  stats.proposed_size_sum += cluster_size;
+  stats.proposed_boundary_sum += boundary;
   stats.proposed_delta_sum += delta_energy;
+  bucket.proposed++;
+  bucket.delta_sum += delta_energy;
+  bucket.boundary_sum += boundary;
+
   if (accepted) {
     stats.accepted++;
-    stats.accepted_size_sum += attempt.cluster_sites.size();
+    stats.accepted_size_sum += cluster_size;
+    stats.accepted_boundary_sum += boundary;
     stats.accepted_delta_sum += delta_energy;
+    bucket.accepted++;
+  } else {
+    stats.rejected++;
   }
 }
 
@@ -158,6 +227,8 @@ static PilotStats run_case(cluster::ReplicaPair pair,
   const auto first_counts = cluster::composition_counts(pair.first);
   const auto second_counts = cluster::composition_counts(pair.second);
   PilotStats stats;
+  stats.size_buckets.assign(kNumSizeBuckets, BucketStats{});
+  stats.initial_disagreements = disagreement_count(pair);
   std::uniform_real_distribution<long double> uniform(0.0L, 1.0L);
 
   for (int step = 0; step < options.steps; ++step) {
@@ -165,8 +236,10 @@ static PilotStats run_case(cluster::ReplicaPair pair,
         pair, nearest_neighbors.data(), 6, options.max_cluster, rule,
         generator);
     long double delta_energy = 0.0L;
+    int boundary = 0;
     bool accepted = false;
     if (attempt.proposed) {
+      boundary = boundary_size(attempt.cluster_sites, nearest_neighbors);
       delta_energy = cluster::cluster_exchange_delta(
           pair, attempt.cluster_sites, nearest_neighbors.data(), 6);
       if (delta_energy <= 0.0L ||
@@ -176,12 +249,13 @@ static PilotStats run_case(cluster::ReplicaPair pair,
       }
     }
 
-    add_result(stats, attempt, accepted, delta_energy);
+    add_result(stats, attempt, accepted, delta_energy, boundary);
     if (cluster::composition_counts(pair.first) != first_counts ||
         cluster::composition_counts(pair.second) != second_counts)
       throw std::runtime_error("cluster move changed replica composition");
   }
 
+  stats.final_disagreements = disagreement_count(pair);
   return stats;
 }
 
@@ -191,8 +265,14 @@ static void print_stats(const char *name, const PilotStats &stats) {
   const long double accepted = stats.accepted;
 
   std::cout << name << ".attempts " << stats.attempts << "\n";
+  std::cout << name << ".initial_disagreements " << stats.initial_disagreements
+            << "\n";
+  std::cout << name << ".final_disagreements " << stats.final_disagreements
+            << "\n";
   std::cout << name << ".closure_rate " << (proposed / attempts) << "\n";
   std::cout << name << ".abandon_rate " << (stats.abandoned / attempts) << "\n";
+  std::cout << name << ".rejection_rate "
+            << (proposed > 0.0L ? stats.rejected / proposed : 0.0L) << "\n";
   std::cout << name << ".acceptance_rate "
             << (proposed > 0.0L ? accepted / proposed : 0.0L) << "\n";
   std::cout << name << ".mean_proposed_size "
@@ -201,12 +281,44 @@ static void print_stats(const char *name, const PilotStats &stats) {
   std::cout << name << ".mean_accepted_size "
             << (accepted > 0.0L ? stats.accepted_size_sum / accepted : 0.0L)
             << "\n";
+  std::cout << name << ".mean_proposed_boundary "
+            << (proposed > 0.0L ? stats.proposed_boundary_sum / proposed
+                                 : 0.0L)
+            << "\n";
+  std::cout << name << ".mean_accepted_boundary "
+            << (accepted > 0.0L ? stats.accepted_boundary_sum / accepted
+                                 : 0.0L)
+            << "\n";
   std::cout << name << ".mean_proposed_delta "
             << (proposed > 0.0L ? stats.proposed_delta_sum / proposed : 0.0L)
             << "\n";
   std::cout << name << ".mean_accepted_delta "
             << (accepted > 0.0L ? stats.accepted_delta_sum / accepted : 0.0L)
             << "\n";
+
+  for (int bucket = 0; bucket < kNumSizeBuckets; ++bucket) {
+    const BucketStats &bucket_stats = stats.size_buckets[bucket];
+    const long double bucket_proposed = bucket_stats.proposed;
+    const long double bucket_accepted = bucket_stats.accepted;
+    const std::string prefix = std::string(name) + ".size_" +
+                               size_bucket_name(bucket);
+    std::cout << prefix << ".proposed " << bucket_stats.proposed << "\n";
+    std::cout << prefix << ".accepted " << bucket_stats.accepted << "\n";
+    std::cout << prefix << ".acceptance_rate "
+              << (bucket_proposed > 0.0L ? bucket_accepted / bucket_proposed
+                                          : 0.0L)
+              << "\n";
+    std::cout << prefix << ".mean_delta "
+              << (bucket_proposed > 0.0L
+                      ? bucket_stats.delta_sum / bucket_proposed
+                      : 0.0L)
+              << "\n";
+    std::cout << prefix << ".mean_boundary "
+              << (bucket_proposed > 0.0L
+                      ? bucket_stats.boundary_sum / bucket_proposed
+                      : 0.0L)
+              << "\n";
+  }
 }
 
 int main(const int argc, char **argv) {

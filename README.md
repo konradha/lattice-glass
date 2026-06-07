@@ -27,6 +27,6 @@ Bounded balanced-cluster pilot:
 make pilot
 ```
 
-The pilot reports closure, abandonment, acceptance, cluster-size, and energy
-delta summaries on a small seeded lattice. It is a diagnostic smoke run, not a
-production sampling campaign.
+The pilot reports closure, abandonment, rejection, acceptance, size-bucket,
+boundary-size, and energy-delta summaries on a small seeded lattice with
+`L >= 8`. It is a diagnostic smoke run, not a production sampling campaign.
