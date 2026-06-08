@@ -44,6 +44,8 @@ struct Options {
   int production = 200000;
   int sample_every = 4;
   unsigned int seed = 20260608u;
+  int mtm_k = 32;
+  int run_fullset = 1;
 };
 
 struct ArmResult {
@@ -85,6 +87,10 @@ static Options parse_options(int argc, char **argv) {
       o.sample_every = parse_int(value);
     else if (key == "--seed")
       o.seed = parse_uint(value);
+    else if (key == "--mtm-k")
+      o.mtm_k = parse_int(value);
+    else if (key == "--full-set")
+      o.run_fullset = parse_int(value);
     else
       throw std::invalid_argument("unknown option " + key);
   }
@@ -95,7 +101,7 @@ static Options parse_options(int argc, char **argv) {
   return o;
 }
 
-enum class Mode { FullSwap, BlindOcc, InformedOcc };
+enum class Mode { FullSwap, BlindOcc, InformedOcc, MtmOcc };
 
 static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
                          int num_type1, int num_type2, Mode mode,
@@ -106,6 +112,9 @@ static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
   informed::SiteLists lists = informed::build_site_lists(lattice);
   std::vector<int> m = informed::build_neighbor_counts(lattice, nn.data());
   std::vector<double> wbuf(lists.vac.size(), 0.0);
+  const int kcap = o.mtm_k > 0 ? o.mtm_k : 1;
+  std::vector<double> cand_w(kcap, 0.0);
+  std::vector<int> cand_v(kcap, 0);
   const int np = static_cast<int>(lists.occ.size());
 
   auto step = [&]() -> informed::SweepStats {
@@ -116,6 +125,10 @@ static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
     if (mode == Mode::BlindOcc)
       return informed::blind_occupancy_sweep(lattice, o.beta, np, lists, m, gen,
                                              nn.data());
+    if (mode == Mode::MtmOcc)
+      return informed::informed_mtm_swap_sweep(lattice, o.beta, np, o.mtm_k,
+                                               lists, m, cand_w, cand_v, gen,
+                                               nn.data());
     return informed::informed_occupancy_sweep(lattice, o.beta, np, lists, m,
                                               wbuf, gen, nn.data());
   };
@@ -187,9 +200,12 @@ int main(int argc, char **argv) {
     std::cout << "inf.production " << o.production << "\n";
     std::cout << "inf.sample_every " << o.sample_every << "\n";
 
+    std::cout << "inf.mtm_k " << o.mtm_k << "\n";
+
     std::mt19937 full_gen(o.seed ^ 0x9E3779B9u);
     std::mt19937 blind_gen(o.seed ^ 0xC2B2AE35u);
     std::mt19937 informed_gen(o.seed ^ 0x1B56C4E9u);
+    std::mt19937 mtm_gen(o.seed ^ 0x27D4EB2Fu);
 
     const ArmResult full =
         run_arm(o, nn, num_type1, num_type2, Mode::FullSwap, full_gen);
@@ -197,37 +213,56 @@ int main(int argc, char **argv) {
     const ArmResult blind =
         run_arm(o, nn, num_type1, num_type2, Mode::BlindOcc, blind_gen);
     print_arm("blind", blind);
-    const ArmResult informed_arm =
-        run_arm(o, nn, num_type1, num_type2, Mode::InformedOcc, informed_gen);
-    print_arm("informed", informed_arm);
 
-    // Per-sweep mixing speedup (blind and informed share the np-attempt sweep
-    // unit and sample cadence, so the ratio of taus is the per-sweep gain).
+    ArmResult informed_arm;
+    const bool have_informed = o.run_fullset != 0;
+    if (have_informed) {
+      informed_arm =
+          run_arm(o, nn, num_type1, num_type2, Mode::InformedOcc, informed_gen);
+      print_arm("informed", informed_arm);
+    }
+
+    const ArmResult mtm =
+        run_arm(o, nn, num_type1, num_type2, Mode::MtmOcc, mtm_gen);
+    print_arm("mtm", mtm);
+
     auto tau_ratio = [](const fp::AutocorrResult &b, const fp::AutocorrResult &i) {
       return i.tau_int > 0.0L ? static_cast<double>(b.tau_int / i.tau_int) : 0.0;
     };
-    std::cout << "speedup.informed_vs_blind.bond_per_sweep "
-              << tau_ratio(blind.bond, informed_arm.bond) << "\n";
-    std::cout << "speedup.informed_vs_blind.energy_per_sweep "
-              << tau_ratio(blind.energy, informed_arm.energy) << "\n";
-
     auto sec_ratio = [&](const ArmResult &b, const fp::AutocorrResult &bx,
                          const ArmResult &i, const fp::AutocorrResult &ix) {
       const double base = ess_per_sec(b, bx);
       return base > 0.0 ? ess_per_sec(i, ix) / base : 0.0;
     };
-    std::cout << "speedup.informed_vs_blind.bond_ess_per_sec "
-              << sec_ratio(blind, blind.bond, informed_arm, informed_arm.bond)
-              << "\n";
-    std::cout << "speedup.informed_vs_blind.energy_ess_per_sec "
-              << sec_ratio(blind, blind.energy, informed_arm, informed_arm.energy)
-              << "\n";
-    std::cout << "speedup.informed_vs_fullswap.bond_ess_per_sec "
-              << sec_ratio(full, full.bond, informed_arm, informed_arm.bond)
-              << "\n";
-    std::cout << "speedup.informed_vs_fullswap.energy_ess_per_sec "
-              << sec_ratio(full, full.energy, informed_arm, informed_arm.energy)
-              << "\n";
+
+    if (have_informed) {
+      std::cout << "speedup.informed_vs_blind.bond_per_sweep "
+                << tau_ratio(blind.bond, informed_arm.bond) << "\n";
+      std::cout << "speedup.informed_vs_blind.energy_per_sweep "
+                << tau_ratio(blind.energy, informed_arm.energy) << "\n";
+      std::cout << "speedup.informed_vs_blind.bond_ess_per_sec "
+                << sec_ratio(blind, blind.bond, informed_arm, informed_arm.bond)
+                << "\n";
+      std::cout << "speedup.informed_vs_blind.energy_ess_per_sec "
+                << sec_ratio(blind, blind.energy, informed_arm, informed_arm.energy)
+                << "\n";
+      std::cout << "speedup.informed_vs_fullswap.bond_ess_per_sec "
+                << sec_ratio(full, full.bond, informed_arm, informed_arm.bond)
+                << "\n";
+    }
+
+    std::cout << "speedup.mtm_vs_blind.bond_per_sweep "
+              << tau_ratio(blind.bond, mtm.bond) << "\n";
+    std::cout << "speedup.mtm_vs_blind.energy_per_sweep "
+              << tau_ratio(blind.energy, mtm.energy) << "\n";
+    std::cout << "speedup.mtm_vs_blind.bond_ess_per_sec "
+              << sec_ratio(blind, blind.bond, mtm, mtm.bond) << "\n";
+    std::cout << "speedup.mtm_vs_blind.energy_ess_per_sec "
+              << sec_ratio(blind, blind.energy, mtm, mtm.energy) << "\n";
+    std::cout << "speedup.mtm_vs_fullswap.bond_ess_per_sec "
+              << sec_ratio(full, full.bond, mtm, mtm.bond) << "\n";
+    std::cout << "speedup.mtm_vs_fullswap.energy_ess_per_sec "
+              << sec_ratio(full, full.energy, mtm, mtm.energy) << "\n";
   } catch (const std::exception &error) {
     std::cerr << "informed_swap_efficiency: " << error.what() << "\n";
     return 1;

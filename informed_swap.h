@@ -381,6 +381,116 @@ inline SweepStats informed_occupancy_sweep(std::vector<uint8_t> &lattice,
   return stats;
 }
 
+// Capped informed relocation via Multiple-Try Metropolis (Liu-Liang-Wong 2000)
+// with the locally-balanced weight. Restores O(N) per sweep: each particle
+// scores only `k` random candidate vacancies instead of all N_v, so cost is
+// O(N_p * k) independent of system size. Exact (reversible w.r.t. the fixed-
+// composition Gibbs measure) for any k.
+//
+// Procedure per move (see also the full-set derivation above):
+//   - pick source i uniformly; remove it (shared dE_remove, mutate to x').
+//   - forward: draw k vacancies v_1..v_k i.i.d. uniform from V; weight each by
+//     a_c = exp(-beta/2 * insert_delta(v_c)); pick winner j ~ a_c. The true
+//     MTM forward weight is w(x,y_c) = w_remove * a_c with w_remove common.
+//   - reverse: the MTM reference set is the forced return move (j->i, weight
+//     a_i = 1/w_remove) plus k-1 fresh vacancies drawn uniform from
+//     V(y) = V\{j}u{i}. Using dE_y(j->v) = -insert_delta(j) + insert_delta(v),
+//     every reverse weight is w(y,.) = (1/a_J) * a(.).
+//   - accept min(1, sum_fwd / sum_rev) = min(1, w_remove * a_J * S_fwd / S_rev),
+//     S_fwd = sum_c a_c, S_rev = (1/w_remove) + sum of k-1 fresh a(.).
+// The base proposal is uniform (symmetric) so it cancels; the 1/N_p source
+// factors cancel under fixed composition. k -> N_v recovers the full-set kernel.
+// `cand_w`/`cand_v` are reused scratch of length >= k.
+inline SweepStats informed_mtm_swap_sweep(
+    std::vector<uint8_t> &lattice, long double beta, int attempts, int k,
+    SiteLists &lists, std::vector<int> &m, std::vector<double> &cand_w,
+    std::vector<int> &cand_v, std::mt19937 &gen, const int *nn) {
+  SweepStats stats;
+  const int np = static_cast<int>(lists.occ.size());
+  int nv = static_cast<int>(lists.vac.size());
+  if (np == 0 || nv == 0 || k <= 0)
+    return stats;
+  if (static_cast<int>(cand_w.size()) < k)
+    cand_w.assign(k, 0.0);
+  if (static_cast<int>(cand_v.size()) < k)
+    cand_v.assign(k, 0);
+  std::uniform_int_distribution<int> occ_dist(0, np - 1);
+  std::uniform_real_distribution<double> uni(0.0, 1.0);
+  const double hb = 0.5 * static_cast<double>(beta);
+  for (int a = 0; a < attempts; ++a) {
+    const int i = lists.occ[occ_dist(gen)];
+    const uint8_t label = lattice[i];
+    const int dE_remove = remove_particle_delta(lattice, m, i, nn);
+    const double w_remove = std::exp(-hb * dE_remove);
+
+    // Mutate to x' (i removed).
+    const int *ni = nn + fp::kNumNeighbors * i;
+    lattice[i] = cluster::kEmpty;
+    for (int t = 0; t < fp::kNumNeighbors; ++t)
+      --m[ni[t]];
+    std::uniform_int_distribution<int> vac_dist(0, nv - 1);
+
+    // Forward: k candidate vacancies, locally-balanced insert weights.
+    double s_fwd = 0.0;
+    for (int c = 0; c < k; ++c) {
+      const int v = lists.vac[vac_dist(gen)];
+      const double aw =
+          std::exp(-hb * insert_particle_delta(lattice, m, v, label, nn));
+      cand_w[c] = aw;
+      cand_v[c] = v;
+      s_fwd += aw;
+    }
+    ++stats.attempts;
+    if (!(s_fwd > 0.0)) { // degenerate underflow: reject, restore x
+      lattice[i] = label;
+      for (int t = 0; t < fp::kNumNeighbors; ++t)
+        ++m[ni[t]];
+      continue;
+    }
+
+    // Select winner j ~ cand_w / s_fwd.
+    double threshold = uni(gen) * s_fwd;
+    int win = k - 1;
+    double acc = 0.0;
+    for (int c = 0; c < k; ++c) {
+      acc += cand_w[c];
+      if (acc >= threshold) {
+        win = c;
+        break;
+      }
+    }
+    const int j = cand_v[win];
+    const double a_j = cand_w[win];
+
+    // Reverse reference set: forced return (j->i, weight 1/w_remove) plus k-1
+    // fresh vacancies uniform over V(y) = V with j replaced by i.
+    double s_rev = 1.0 / w_remove;
+    for (int c = 0; c < k - 1; ++c) {
+      const int idx = vac_dist(gen);
+      const int v = (lists.vac[idx] == j) ? i : lists.vac[idx];
+      s_rev += std::exp(-hb * insert_particle_delta(lattice, m, v, label, nn));
+    }
+
+    const double num = w_remove * a_j * s_fwd;
+    const double accept = num >= s_rev ? 1.0 : num / s_rev;
+    stats.accept_prob_sum += accept;
+    if (accept >= 1.0 || (accept > 0.0 && uni(gen) < accept)) {
+      // Commit: insert the particle at j (config y).
+      const int *nj = nn + fp::kNumNeighbors * j;
+      lattice[j] = label;
+      for (int t = 0; t < fp::kNumNeighbors; ++t)
+        ++m[nj[t]];
+      commit_move(lists, i, j);
+      ++stats.accepted;
+    } else {
+      // Reject: re-insert the particle at i (restore x).
+      lattice[i] = label;
+      for (int t = 0; t < fp::kNumNeighbors; ++t)
+        ++m[ni[t]];
+    }
+  }
+  return stats;
+}
 } // namespace informed
 } // namespace lattice_glass
 

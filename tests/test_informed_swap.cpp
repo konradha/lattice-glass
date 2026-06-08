@@ -190,6 +190,137 @@ static ChainMoments run_occupancy_only(int L, long double beta, int burn,
   return m;
 }
 
+// MTM-only chain under test (capped informed with k candidates).
+static ChainMoments run_mtm_only(int L, long double beta, int burn, int measure,
+                                 int k, unsigned seed) {
+  const int lat_size = L * L * L;
+  const std::vector<int> nn = fp::cubic_neighbors(L);
+  std::mt19937 gen(seed);
+  std::vector<uint8_t> lattice = fp::random_lattice(60, 90, lat_size, gen);
+  informed::SiteLists lists = informed::build_site_lists(lattice);
+  std::vector<int> mcount = informed::build_neighbor_counts(lattice, nn.data());
+  std::vector<double> cw(k, 0.0);
+  std::vector<int> cv(k, 0);
+  const int np = static_cast<int>(lists.occ.size());
+  auto step = [&]() {
+    informed::informed_mtm_swap_sweep(lattice, beta, np, k, lists, mcount, cw, cv,
+                                      gen, nn.data());
+  };
+  for (int s = 0; s < burn; ++s)
+    step();
+  ChainMoments m;
+  for (int s = 0; s < measure; ++s) {
+    step();
+    const long double e = fp::total_energy_int(lattice, nn.data());
+    m.e_mean += e;
+    m.e2_mean += e * e;
+    m.bond_mean += informed::occupied_bond_count(lattice, nn.data());
+  }
+  m.e_mean /= measure;
+  m.e2_mean /= measure;
+  m.bond_mean /= measure;
+  return m;
+}
+
+// Validates the MTM factorization at the exact integer-dE level: the forward
+// decomposition dE(i->v) = remove(i) + insert(v in x'), and the reverse-weight
+// identity dE_y(j->v) = -insert(j in x') + insert(v in x') that lets the reverse
+// normalizer be formed without re-deriving energies in y.
+static void test_mtm_reverse_identity() {
+  const int L = 6;
+  const int lat_size = L * L * L;
+  const std::vector<int> nn = fp::cubic_neighbors(L);
+  std::mt19937 gen(7777);
+  long long checks = 0;
+  for (int trial = 0; trial < 300; ++trial) {
+    std::vector<uint8_t> lat = fp::random_lattice(60, 90, lat_size, gen);
+    std::vector<int> m = informed::build_neighbor_counts(lat, nn.data());
+    informed::SiteLists lists = informed::build_site_lists(lat);
+    std::uniform_int_distribution<int> od(0, static_cast<int>(lists.occ.size()) - 1);
+    std::uniform_int_distribution<int> vd(0, static_cast<int>(lists.vac.size()) - 1);
+    const int i = lists.occ[od(gen)];
+    const int j = lists.vac[vd(gen)];
+    const uint8_t label = lat[i];
+
+    const int d_ij = informed::move_delta_energy(lat, m, i, j, nn.data());
+    const int d_rem = informed::remove_particle_delta(lat, m, i, nn.data());
+
+    std::vector<uint8_t> xp = lat; // x' = x with i removed
+    std::vector<int> mp = m;
+    xp[i] = cluster::kEmpty;
+    const int *ni = nn.data() + lattice_glass::fp::kNumNeighbors * i;
+    for (int t = 0; t < lattice_glass::fp::kNumNeighbors; ++t)
+      --mp[ni[t]];
+    const int ins_j = informed::insert_particle_delta(xp, mp, j, label, nn.data());
+    assert(d_rem + ins_j == d_ij); // forward decomposition
+
+    std::vector<uint8_t> y = xp; // y = x' + particle at j
+    std::vector<int> my = mp;
+    y[j] = label;
+    const int *nj = nn.data() + lattice_glass::fp::kNumNeighbors * j;
+    for (int t = 0; t < lattice_glass::fp::kNumNeighbors; ++t)
+      ++my[nj[t]];
+
+    int vtests[2] = {i, lists.vac[vd(gen)]};
+    for (int q = 0; q < 2; ++q) {
+      int v = vtests[q];
+      if (v == j)
+        v = i; // v must be a vacancy of y
+      const int direct = informed::move_delta_energy(y, my, j, v, nn.data());
+      const int ins_v = informed::insert_particle_delta(xp, mp, v, label, nn.data());
+      assert(direct == -ins_j + ins_v); // reverse-weight identity
+      ++checks;
+    }
+  }
+  std::cout << "  mtm reverse identity holds on " << checks << " pairs\n";
+}
+
+static void test_mtm_conserves() {
+  const int L = 6;
+  const int lat_size = L * L * L;
+  const std::vector<int> nn = fp::cubic_neighbors(L);
+  std::mt19937 gen(2024);
+  std::vector<uint8_t> lattice = fp::random_lattice(60, 90, lat_size, gen);
+  const auto c0 = counts(lattice);
+  informed::SiteLists lists = informed::build_site_lists(lattice);
+  std::vector<int> m = informed::build_neighbor_counts(lattice, nn.data());
+  std::vector<double> cw(8, 0.0);
+  std::vector<int> cv(8, 0);
+  const int np = static_cast<int>(lists.occ.size());
+  long long accepted = 0;
+  for (int round = 0; round < 60; ++round) {
+    const informed::SweepStats s = informed::informed_mtm_swap_sweep(
+        lattice, 2.0L, np, 8, lists, m, cw, cv, gen, nn.data());
+    accepted += s.accepted;
+    assert(counts(lattice) == c0);
+    assert_state_consistent(lattice, lists, m, nn.data());
+  }
+  assert(accepted > 0);
+}
+
+// Stationarity gate for the capped MTM kernel: its equilibrium must match the
+// trusted nonlocal swap (sharp on the pure-occupancy bond mean).
+static void test_mtm_matches_reference() {
+  const int L = 6;
+  const long double beta = 1.5L;
+  const int burn = 4000;
+  const int measure = 15000;
+  const int k = 8;
+  const ChainMoments ref = run_reference(L, beta, burn, measure, 1234);
+  const ChainMoments mtm = run_mtm_only(L, beta, burn, measure, k, 31337);
+  auto rel = [](long double a, long double b) {
+    return std::fabsl(a - b) / std::fabsl(b);
+  };
+  std::cout << "  mtm(k=" << k << ")  <E>=" << static_cast<double>(mtm.e_mean)
+            << " <B>=" << static_cast<double>(mtm.bond_mean)
+            << " relE=" << static_cast<double>(rel(mtm.e_mean, ref.e_mean))
+            << " relB=" << static_cast<double>(rel(mtm.bond_mean, ref.bond_mean))
+            << "\n";
+  assert(rel(mtm.e_mean, ref.e_mean) < 0.03L);
+  assert(rel(mtm.e2_mean, ref.e2_mean) < 0.05L);
+  assert(rel(mtm.bond_mean, ref.bond_mean) < 0.012L);
+}
+
 // Stationarity gate: an occupancy-only chain (blind or informed) is ergodic for
 // the fixed-composition Gibbs measure, so its equilibrium energy, energy^2, and
 // occupied-bond moments must match the trusted nonlocal swap. The bond mean is
@@ -238,8 +369,11 @@ static void test_occupancy_only_matches_reference() {
 
 int main() {
   test_move_delta_matches_reference();
+  test_mtm_reverse_identity();
   test_conserves_composition();
+  test_mtm_conserves();
   test_occupancy_only_matches_reference();
+  test_mtm_matches_reference();
   std::cout << "informed swap tests passed\n";
   return 0;
 }
