@@ -64,3 +64,31 @@ integrated autocorrelation time and ESS-per-second for the base sampler versus
 the base+balanced-cluster sampler at matched wall-clock. Pass an explicit
 `--epsilon` to skip calibration. These are pilot-scale runs; a publishable
 efficiency claim needs multiple seeds, a temperature scan, and size scaling.
+
+Informed (locally-balanced) vs blind nonlocal occupancy swap:
+```bash
+make experiments/informed_swap_efficiency
+./experiments/informed_swap_efficiency --L 8 --beta 2.0 \
+  --production 120000 --sample-every 8
+python experiments/run_informed_sweep.py --workers 4        # temperature scan
+python experiments/run_informed_sweep.py --hard --workers 4 # hard-window budgets
+python experiments/analyze_informed.py --csv experiments/informed_results.csv
+```
+
+The occupancy bottleneck is the nonlocal swap with a UNIFORM destination, whose
+acceptance collapses at low T. `informed_swap.h` keeps the exact move set but
+draws the destination vacancy with the Zanella locally-balanced weight
+`sqrt(exp(-beta dE))` (exact dE, no surrogate; MH-corrected to
+`min(1, Z_i/Z_j)`). The harness compares the trusted all-pairs swap, the blind
+occupancy swap, and the informed occupancy swap, reporting occupancy-move
+acceptance and the integrated autocorrelation time / ESS-per-second of the
+energy and the pure-occupancy bond count.
+
+Findings (multi-seed, Madras-Sokal tau-resolved): informed restores acceptance
+monotonically (~9x at T=1.0 to ~50x at T=0.4) and, in the resolvable regime
+(T >= 0.5), accelerates occupancy decorrelation per sweep by 4-28x at L=8 and
+~67x at L=10 -- the advantage GROWS with system size -- beating blind per second
+and edging past the trusted full swap at T=0.5. Below T~0.4 the occupancy tau
+exceeds ~1e6 sweeps (unresolved even at 1.2M), so the residual slowdown there is
+barrier-limited (RFOT), not proposal-limited: informed proposals fix proposal
+quality, not thermodynamic barrier crossing.

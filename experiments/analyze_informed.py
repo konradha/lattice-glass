@@ -56,7 +56,7 @@ def main() -> int:
 
     hdr = (f"{'L':>3} {'beta':>5} {'T':>6} {'n':>2} "
            f"{'blind_acc':>10} {'inf_acc':>9} {'accx':>7} "
-           f"{'bond/swp':>9} {'bond/s':>7} {'enr/s':>7} "
+           f"{'bond/swp':>9} {'bswp(R)':>8} {'bond/s':>7} {'enr/s':>7} "
            f"{'res b/i':>8} {'inf<full':>8}")
     print(hdr)
     print("-" * len(hdr))
@@ -68,6 +68,10 @@ def main() -> int:
         inf_acc = med([fnum(r["informed_acc"]) for r in rows])
         accx = med([fnum(r["acc_ratio"]) for r in rows])
         bond_swp = med([fnum(r["speedup_bond_per_sweep"]) for r in rows])
+        both_res = [r for r in rows
+                    if (fnum(r["blind_bond_res"]) or 0) >= 0.5
+                    and (fnum(r["informed_bond_res"]) or 0) >= 0.5]
+        bond_swp_res = med([fnum(r["speedup_bond_per_sweep"]) for r in both_res])
         bond_s = med([fnum(r["speedup_bond_ess_s"]) for r in rows])
         enr_s = med([fnum(r["speedup_energy_ess_s"]) for r in rows])
         res_b = frac([fnum(r["blind_bond_res"]) for r in rows])
@@ -79,7 +83,8 @@ def main() -> int:
 
         print(f"{L:>3} {beta:>5.2f} {T:>6.3f} {n:>2} "
               f"{fmt(blind_acc,4):>10} {fmt(inf_acc,4):>9} {fmt(accx,1):>7} "
-              f"{fmt(bond_swp,2):>9} {fmt(bond_s,2):>7} {fmt(enr_s,2):>7} "
+              f"{fmt(bond_swp,2):>9} {fmt(bond_swp_res,2):>8} {fmt(bond_s,2):>7} "
+              f"{fmt(enr_s,2):>7} "
               f"{fmt(res_b,1)}/{fmt(res_i,1):>3} {fmt(inf_full,2):>8}")
 
     print("\nLegend: accx = informed/blind acceptance; bond/swp = per-sweep bond "
