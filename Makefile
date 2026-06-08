@@ -7,7 +7,9 @@ LDFLAGS ?=
 LDLIBS ?= -lm -lstdc++
 
 ifneq ($(CONDA_PREFIX),)
-LDFLAGS += -Wl,-rpath,$(CONDA_PREFIX)/lib
+# conda's clang driver passes Apple's ld an -lto_library it rejects; the bundled
+# lld links cleanly. Guarded by CONDA_PREFIX so non-conda builds are untouched.
+LDFLAGS += -Wl,-rpath,$(CONDA_PREFIX)/lib -fuse-ld=lld
 endif
 
 TARGET = to_omp
@@ -23,6 +25,8 @@ COLLECTIVE_MOVES_TEST = tests/test_collective_moves
 OCCUPANCY_EFFICIENCY = experiments/occupancy_efficiency
 LIFTED_VACANCY_TEST = tests/test_lifted_vacancy
 LIFTED_SWAP_TEST = tests/test_lifted_swap
+INFORMED_SWAP_TEST = tests/test_informed_swap
+INFORMED_SWAP_EFFICIENCY = experiments/informed_swap_efficiency
 
 .PHONY: all check clean pilot diag fpbench
 
@@ -67,6 +71,12 @@ $(LIFTED_VACANCY_TEST): tests/test_lifted_vacancy.cpp lifted_vacancy.h fp_sample
 $(LIFTED_SWAP_TEST): tests/test_lifted_swap.cpp lifted_swap.h fp_sampler.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_lifted_swap.cpp $(LDFLAGS) $(LDLIBS) -o $(LIFTED_SWAP_TEST)
 
+$(INFORMED_SWAP_TEST): tests/test_informed_swap.cpp informed_swap.h fp_sampler.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) tests/test_informed_swap.cpp $(LDFLAGS) $(LDLIBS) -o $(INFORMED_SWAP_TEST)
+
+$(INFORMED_SWAP_EFFICIENCY): experiments/informed_swap_efficiency.cpp informed_swap.h fp_sampler.h species_reduction.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/informed_swap_efficiency.cpp $(LDFLAGS) $(LDLIBS) -o $(INFORMED_SWAP_EFFICIENCY)
+
 diag: $(CLUSTER_DIAGNOSTICS)
 	./$(CLUSTER_DIAGNOSTICS)
 
@@ -76,7 +86,7 @@ fpbench: $(FP_EFFICIENCY)
 pilot: $(BALANCED_CLUSTER_PILOT)
 	./$(BALANCED_CLUSTER_PILOT)
 
-check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(REFERENCE_CANCELLATION_TEST) $(COLLECTIVE_MOVES_TEST) $(LIFTED_VACANCY_TEST) $(LIFTED_SWAP_TEST)
+check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(REFERENCE_CANCELLATION_TEST) $(COLLECTIVE_MOVES_TEST) $(LIFTED_VACANCY_TEST) $(LIFTED_SWAP_TEST) $(INFORMED_SWAP_TEST)
 	./$(EXCHANGE_DELTA_TEST)
 	./$(SPECIES_REDUCTION_TEST)
 	./$(BALANCED_CLUSTER_TEST)
@@ -84,7 +94,8 @@ check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST)
 	./$(COLLECTIVE_MOVES_TEST)
 	./$(LIFTED_VACANCY_TEST)
 	./$(LIFTED_SWAP_TEST)
+	./$(INFORMED_SWAP_TEST)
 	python -m unittest discover -s tests
 
 clean:
-	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY) $(LIFTED_VACANCY_TEST) $(LIFTED_SWAP_TEST)
+	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY) $(LIFTED_VACANCY_TEST) $(LIFTED_SWAP_TEST) $(INFORMED_SWAP_TEST) $(INFORMED_SWAP_EFFICIENCY)

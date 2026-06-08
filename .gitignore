@@ -12,6 +12,8 @@ experiments/occupancy_efficiency
 tests/test_collective_moves
 tests/test_lifted_vacancy
 tests/test_lifted_swap
+tests/test_informed_swap
+experiments/informed_swap_efficiency
 
 # python
 __pycache__/
@@ -26,3 +28,7 @@ experiments/occupancy_results*.csv
 experiments/occupancy*.log
 experiments/occupancy*.pid
 experiments/occupancy*.err
+experiments/informed_results*.csv
+experiments/informed*.log
+experiments/informed*.pid
+experiments/informed*.err
