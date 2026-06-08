@@ -11,6 +11,7 @@
 
 #include "../collective_moves.h"
 #include "../fp_sampler.h"
+#include "../lifted_swap.h"
 #include "../lifted_vacancy.h"
 #include "../species_reduction.h"
 
@@ -27,6 +28,7 @@ namespace fp = lattice_glass::fp;
 namespace collective = lattice_glass::collective;
 namespace species = lattice_glass::species;
 namespace lifted = lattice_glass::lifted;
+namespace axis_lift = lattice_glass::axis_lift;
 
 struct Options {
   int L = 10;
@@ -38,6 +40,7 @@ struct Options {
   int sample_every = 4;
   int k_max = 6;
   int chain_attempts = 120;
+  int stride = 4;
   unsigned int seed = 20260606u;
 };
 
@@ -81,6 +84,8 @@ static Options parse_options(int argc, char **argv) {
       o.k_max = parse_int(value);
     else if (key == "--chain-attempts")
       o.chain_attempts = parse_int(value);
+    else if (key == "--stride")
+      o.stride = parse_int(value);
     else if (key == "--seed")
       o.seed = parse_uint(value);
     else
@@ -93,7 +98,7 @@ static Options parse_options(int argc, char **argv) {
   return o;
 }
 
-enum class Mode { Swap, SwapChain, SwapLifted };
+enum class Mode { Swap, SwapChain, SwapLifted, SwapLiftedSwap };
 
 static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
                          int num_type1, int num_type2, Mode mode,
@@ -112,6 +117,9 @@ static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
     else if (mode == Mode::SwapLifted)
       lifted::lifted_vacancy_chain(lattice, o.beta, lifted_events,
                                    lifted_refresh, gen, nn.data());
+    else if (mode == Mode::SwapLiftedSwap)
+      axis_lift::lifted_swap_chain(lattice, o.beta, lifted_events, o.stride,
+                                   lifted_refresh, o.L, gen, nn.data());
   }
 
   std::vector<long double> plain, rb;
@@ -127,6 +135,12 @@ static ArmResult run_arm(const Options &o, const std::vector<int> &nn,
     } else if (mode == Mode::SwapLifted) {
       const lifted::EventStats ls = lifted::lifted_vacancy_chain(
           lattice, o.beta, lifted_events, lifted_refresh, gen, nn.data());
+      result.chain_attempts += ls.events;
+      result.chain_accepted += ls.accepted;
+    } else if (mode == Mode::SwapLiftedSwap) {
+      const axis_lift::EventStats ls = axis_lift::lifted_swap_chain(
+          lattice, o.beta, lifted_events, o.stride, lifted_refresh, o.L, gen,
+          nn.data());
       result.chain_attempts += ls.events;
       result.chain_accepted += ls.accepted;
     }
@@ -189,13 +203,14 @@ int main(int argc, char **argv) {
     std::cout << "occ.production " << o.production << "\n";
     std::cout << "occ.k_max " << o.k_max << "\n";
     std::cout << "occ.chain_attempts " << o.chain_attempts << "\n";
+    std::cout << "occ.stride " << o.stride << "\n";
 
     const ArmResult swap =
         run_arm(o, nn, num_type1, num_type2, Mode::Swap, swap_gen);
     print_arm("swap", swap);
-    const ArmResult swapchain =
-        run_arm(o, nn, num_type1, num_type2, Mode::SwapChain, chain_gen);
-    print_arm("swapchain", swapchain);
+    const ArmResult swapliftedswap = run_arm(
+        o, nn, num_type1, num_type2, Mode::SwapLiftedSwap, chain_gen);
+    print_arm("swapliftedswap", swapliftedswap);
     std::mt19937 lifted_gen(o.seed ^ 0x1B56C4E9u);
     const ArmResult swaplifted =
         run_arm(o, nn, num_type1, num_type2, Mode::SwapLifted, lifted_gen);
@@ -207,10 +222,12 @@ int main(int argc, char **argv) {
       const double clu = ess_per_sec(ca, c);
       return base > 0.0 ? clu / base : 0.0;
     };
-    std::cout << "speedup.plain_energy_ess_per_sec "
-              << speedup(swap.plain, swapchain.plain, swap, swapchain) << "\n";
-    std::cout << "speedup.rb_energy_ess_per_sec "
-              << speedup(swap.rb, swapchain.rb, swap, swapchain) << "\n";
+    std::cout << "speedup.liftedswap_plain_energy_ess_per_sec "
+              << speedup(swap.plain, swapliftedswap.plain, swap, swapliftedswap)
+              << "\n";
+    std::cout << "speedup.liftedswap_rb_energy_ess_per_sec "
+              << speedup(swap.rb, swapliftedswap.rb, swap, swapliftedswap)
+              << "\n";
     std::cout << "speedup.lifted_plain_energy_ess_per_sec "
               << speedup(swap.plain, swaplifted.plain, swap, swaplifted) << "\n";
     std::cout << "speedup.lifted_rb_energy_ess_per_sec "

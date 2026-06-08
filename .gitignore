@@ -8,6 +8,10 @@ tests/test_reference_cancellation
 experiments/pilot_balanced_cluster
 experiments/cluster_diagnostics
 experiments/fp_efficiency
+experiments/occupancy_efficiency
+tests/test_collective_moves
+tests/test_lifted_vacancy
+tests/test_lifted_swap
 
 # python
 __pycache__/
@@ -18,3 +22,7 @@ experiments/campaign_results*.csv
 experiments/campaign*.log
 experiments/campaign*.pid
 experiments/campaign*.err
+experiments/occupancy_results*.csv
+experiments/occupancy*.log
+experiments/occupancy*.pid
+experiments/occupancy*.err
