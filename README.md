@@ -85,10 +85,14 @@ acceptance and the integrated autocorrelation time / ESS-per-second of the
 energy and the pure-occupancy bond count.
 
 Findings (multi-seed, Madras-Sokal tau-resolved): informed restores acceptance
-monotonically (~9x at T=1.0 to ~50x at T=0.4) and, in the resolvable regime
-(T >= 0.5), accelerates occupancy decorrelation per sweep by 4-28x at L=8 and
-~67x at L=10 -- the advantage GROWS with system size -- beating blind per second
-and edging past the trusted full swap at T=0.5. Below T~0.4 the occupancy tau
-exceeds ~1e6 sweeps (unresolved even at 1.2M), so the residual slowdown there is
-barrier-limited (RFOT), not proposal-limited: informed proposals fix proposal
+monotonically (~9x at T=1.0 to ~53x at T=0.4) and accelerates occupancy
+decorrelation per sweep by 4-28x at L=8 (~67x at L=10 -- the advantage GROWS
+with system size). Versus the blind occupancy swap it wins per second from
+T<=0.67 down through T=0.4 (~2.5x at T=0.4, 6 seeds), and at T=0.5 it edges past
+even the trusted full nonlocal swap per second (L=8 1.17x, L=10 1.05x). Two
+limits remain: (i) at T=0.4 the full-set O(N_v) cost keeps informed below the
+cheap full swap per second (~0.3x) despite the per-sweep win -- a capped /
+multiple-try candidate set is the lever to convert it; (ii) at T~0.33 the
+occupancy tau is unresolved even at 1.2M sweeps, so the residual slowdown is
+barrier-limited (RFOT), not proposal-limited. Informed proposals fix proposal
 quality, not thermodynamic barrier crossing.
