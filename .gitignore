@@ -34,3 +34,8 @@ experiments/informed*.pid
 experiments/informed*.err
 experiments/mtm_*.log
 experiments/mtm_*.done
+experiments/production_sampler
+experiments/bench_swap
+*.npy
+*.bin
+*.bin.tmp

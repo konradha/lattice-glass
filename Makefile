@@ -27,6 +27,8 @@ LIFTED_VACANCY_TEST = tests/test_lifted_vacancy
 LIFTED_SWAP_TEST = tests/test_lifted_swap
 INFORMED_SWAP_TEST = tests/test_informed_swap
 INFORMED_SWAP_EFFICIENCY = experiments/informed_swap_efficiency
+PRODUCTION_SAMPLER = experiments/production_sampler
+BENCH_SWAP = experiments/bench_swap
 
 .PHONY: all check clean pilot diag fpbench
 
@@ -77,6 +79,12 @@ $(INFORMED_SWAP_TEST): tests/test_informed_swap.cpp informed_swap.h fp_sampler.h
 $(INFORMED_SWAP_EFFICIENCY): experiments/informed_swap_efficiency.cpp informed_swap.h fp_sampler.h species_reduction.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(TESTFLAGS) experiments/informed_swap_efficiency.cpp $(LDFLAGS) $(LDLIBS) -o $(INFORMED_SWAP_EFFICIENCY)
 
+$(PRODUCTION_SAMPLER): experiments/production_sampler.cpp fp_sampler.h npy.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) experiments/production_sampler.cpp $(LDFLAGS) $(LDLIBS) -o $(PRODUCTION_SAMPLER)
+
+$(BENCH_SWAP): experiments/bench_swap.cpp informed_swap.h fp_sampler.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) experiments/bench_swap.cpp $(LDFLAGS) $(LDLIBS) -o $(BENCH_SWAP)
+
 diag: $(CLUSTER_DIAGNOSTICS)
 	./$(CLUSTER_DIAGNOSTICS)
 
@@ -98,4 +106,4 @@ check: $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST)
 	python -m unittest discover -s tests
 
 clean:
-	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY) $(LIFTED_VACANCY_TEST) $(LIFTED_SWAP_TEST) $(INFORMED_SWAP_TEST) $(INFORMED_SWAP_EFFICIENCY)
+	rm -f $(TARGET) measure_rng $(EXCHANGE_DELTA_TEST) $(SPECIES_REDUCTION_TEST) $(BALANCED_CLUSTER_TEST) $(BALANCED_CLUSTER_PILOT) $(CLUSTER_DIAGNOSTICS) $(REFERENCE_CANCELLATION_TEST) $(FP_EFFICIENCY) $(COLLECTIVE_MOVES_TEST) $(OCCUPANCY_EFFICIENCY) $(LIFTED_VACANCY_TEST) $(LIFTED_SWAP_TEST) $(INFORMED_SWAP_TEST) $(INFORMED_SWAP_EFFICIENCY) $(PRODUCTION_SAMPLER) $(BENCH_SWAP)
