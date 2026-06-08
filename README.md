@@ -96,3 +96,18 @@ multiple-try candidate set is the lever to convert it; (ii) at T~0.33 the
 occupancy tau is unresolved even at 1.2M sweeps, so the residual slowdown is
 barrier-limited (RFOT), not proposal-limited. Informed proposals fix proposal
 quality, not thermodynamic barrier crossing.
+
+Capped kernel (`informed_mtm_swap_sweep`, `--mtm-k k`): the full-set proposal is
+O(N_v) per move; the Multiple-Try-Metropolis cap scores only `k` random
+candidate vacancies, restoring O(N) per sweep (measured: L8->L20 cost x17 for
+x15.6 sites, vs the full-set's x244). It is exact (the reverse-weight identity
+and the bond-mean stationarity gate hold). Performance is k-dependent and k is
+the knob: cost grows ~linearly in k while the per-sweep gain saturates, so small
+k wins. At L=10, T=0.5 the optimum is k~4-8, giving ~2x ESS/s over blind --
+matching the full-set kernel but at O(N) cost, so it scales. At L=20, T=0.5
+(k=4) it is ~2x over blind on energy and ~1x on the bond observable: T=0.5 is the
+easy end where blind still mixes, so the margin is thin and single-seed-noisy.
+The capped kernel's real payoff is the low-T regime (T<=0.4), where blind tau
+explodes and the per-sweep gain is largest; quantifying that needs the long
+deep-T runs and is not yet done. Honest status: correct and O(N), a clean win at
+L=10, marginal at L=20/T=0.5, deep-T win projected but unverified.
