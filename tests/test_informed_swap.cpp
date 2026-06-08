@@ -367,6 +367,83 @@ static void test_occupancy_only_matches_reference() {
   assert(rel(inf.bond_mean, ref.bond_mean) < 0.012L);
 }
 
+// fast_swap_sweep is the trusted all-pairs swap with O(1)/O(6) energy; its
+// equilibrium must match nonlocal_swap_sweep tightly (identical move set), and
+// it must keep the occupied-neighbour-count array exactly consistent.
+static void test_fast_swap_matches_reference() {
+  const int L = 6;
+  const long double beta = 1.5L;
+  const int burn = 5000, measure = 40000, off = 160;
+  const std::vector<int> nn = fp::cubic_neighbors(L);
+  std::vector<double> etab(off + 1);
+  for (int d = 0; d <= off; ++d)
+    etab[d] = std::exp(-static_cast<double>(beta) * d);
+  std::mt19937 gen(24680);
+  std::vector<uint8_t> lat = fp::random_lattice(60, 90, L * L * L, gen);
+  std::vector<int> m = informed::build_neighbor_counts(lat, nn.data());
+  const auto c0 = counts(lat);
+  for (int s = 0; s < burn; ++s)
+    informed::fast_swap_sweep(lat, m, beta, L * L * L, etab.data(), off, gen, nn.data());
+  ChainMoments fs;
+  for (int s = 0; s < measure; ++s) {
+    informed::fast_swap_sweep(lat, m, beta, L * L * L, etab.data(), off, gen, nn.data());
+    const long double e = fp::total_energy_int(lat, nn.data());
+    fs.e_mean += e;
+    fs.e2_mean += e * e;
+    fs.bond_mean += informed::occupied_bond_count(lat, nn.data());
+  }
+  fs.e_mean /= measure;
+  fs.e2_mean /= measure;
+  fs.bond_mean /= measure;
+  assert(counts(lat) == c0);
+  assert(informed::build_neighbor_counts(lat, nn.data()) == m); // m stayed exact
+  const ChainMoments ref = run_reference(L, beta, burn, measure, 1234);
+  auto rel = [](long double a, long double b) {
+    return std::fabsl(a - b) / std::fabsl(b);
+  };
+  std::cout << "  fast_swap  <E>=" << static_cast<double>(fs.e_mean)
+            << " <B>=" << static_cast<double>(fs.bond_mean)
+            << " relE=" << static_cast<double>(rel(fs.e_mean, ref.e_mean))
+            << " relB=" << static_cast<double>(rel(fs.bond_mean, ref.bond_mean)) << "\n";
+  // Energy carries species-mixing MC noise at L=6/15k samples even between two
+  // correct samplers; the deterministic species-delta check below is the exact
+  // energy gate, the bond mean (~5e-5) is the exact occupancy gate.
+  assert(rel(fs.e_mean, ref.e_mean) < 0.03L);
+  assert(rel(fs.e2_mean, ref.e2_mean) < 0.04L);
+  assert(rel(fs.bond_mean, ref.bond_mean) < 0.012L);
+}
+
+// Exact check of the O(1) species-swap energy used by fast_swap_sweep against
+// the region-recompute reference, over many random type1<->type2 swaps.
+static void test_species_delta_matches_reference() {
+  const int L = 6;
+  const std::vector<int> nn = fp::cubic_neighbors(L);
+  std::mt19937 gen(13579);
+  long long checks = 0;
+  for (int trial = 0; trial < 300; ++trial) {
+    std::vector<uint8_t> lat = fp::random_lattice(60, 90, L * L * L, gen);
+    std::vector<int> m = informed::build_neighbor_counts(lat, nn.data());
+    std::vector<int> t1, t2;
+    for (int s = 0; s < static_cast<int>(lat.size()); ++s) {
+      if (lat[s] == cluster::kType1) t1.push_back(s);
+      else if (lat[s] == cluster::kType2) t2.push_back(s);
+    }
+    std::uniform_int_distribution<int> d1(0, static_cast<int>(t1.size()) - 1);
+    std::uniform_int_distribution<int> d2(0, static_cast<int>(t2.size()) - 1);
+    for (int k = 0; k < 20; ++k) {
+      const int x = t1[d1(gen)], y = t2[d2(gen)];
+      const int lxp = informed::preferred_coordination(lat[x]);
+      const int lyp = informed::preferred_coordination(lat[y]);
+      const int dx = m[x], dy = m[y];
+      const int dfast = (dx - lyp) * (dx - lyp) - (dx - lxp) * (dx - lxp) +
+                        (dy - lxp) * (dy - lxp) - (dy - lyp) * (dy - lyp);
+      const int dref = informed::swap_delta_energy(lat, x, y, nn.data());
+      assert(dfast == dref);
+      ++checks;
+    }
+  }
+  std::cout << "  species delta matches reference on " << checks << " swaps\n";
+}
 int main() {
   test_move_delta_matches_reference();
   test_mtm_reverse_identity();
@@ -374,6 +451,8 @@ int main() {
   test_mtm_conserves();
   test_occupancy_only_matches_reference();
   test_mtm_matches_reference();
+  test_species_delta_matches_reference();
+  test_fast_swap_matches_reference();
   std::cout << "informed swap tests passed\n";
   return 0;
 }

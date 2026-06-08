@@ -491,6 +491,62 @@ inline SweepStats informed_mtm_swap_sweep(
   }
   return stats;
 }
+
+// Optimized all-pairs nonlocal swap -- the SAME Markov chain as
+// fp::nonlocal_swap_sweep at epsilon=0, but with fast energy: a species swap
+// (two occupied sites of different type) changes only the two sites' own terms,
+// since every neighbour's occupied-count is unchanged -> O(1); an occupancy
+// swap (occupied <-> vacant) uses the O(1) remove/insert deltas. `etab[d]` must
+// hold exp(-beta*d) for d in [0, off]; d<=0 auto-accepts, d>off falls back to
+// std::exp. Maintains the occupied-neighbour-count array m. One call = `attempts`
+// attempted moves. Validated against the trusted swap in tests.
+inline void fast_swap_sweep(std::vector<uint8_t> &lattice, std::vector<int> &m,
+                            long double beta, int attempts, const double *etab,
+                            int off, std::mt19937 &gen, const int *nn) {
+  const int N = static_cast<int>(lattice.size());
+  std::uniform_int_distribution<int> site(0, N - 1);
+  std::uniform_real_distribution<double> uni(0.0, 1.0);
+  const double b = static_cast<double>(beta);
+  auto accept = [&](int d) {
+    return d <= 0 || (d <= off ? uni(gen) < etab[d] : uni(gen) < std::exp(-b * d));
+  };
+  for (int a = 0; a < attempts; ++a) {
+    const int x = site(gen), y = site(gen);
+    const uint8_t lx = lattice[x], ly = lattice[y];
+    if (lx == ly)
+      continue;
+    if (lx != cluster::kEmpty && ly != cluster::kEmpty) {
+      const int lxp = preferred_coordination(lx), lyp = preferred_coordination(ly);
+      const int dx = m[x], dy = m[y];
+      const int d = (dx - lyp) * (dx - lyp) - (dx - lxp) * (dx - lxp) +
+                    (dy - lxp) * (dy - lxp) - (dy - lyp) * (dy - lyp);
+      if (accept(d)) {
+        lattice[x] = ly;
+        lattice[y] = lx; // occupied-counts unchanged
+      }
+    } else {
+      const int o = (lx != cluster::kEmpty) ? x : y;
+      const int e = (lx != cluster::kEmpty) ? y : x;
+      const uint8_t lab = lattice[o];
+      const int d_rem = remove_particle_delta(lattice, m, o, nn);
+      const int *no = nn + fp::kNumNeighbors * o;
+      lattice[o] = cluster::kEmpty;
+      for (int k = 0; k < fp::kNumNeighbors; ++k)
+        --m[no[k]];
+      const int d = d_rem + insert_particle_delta(lattice, m, e, lab, nn);
+      if (accept(d)) {
+        const int *ne = nn + fp::kNumNeighbors * e;
+        lattice[e] = lab;
+        for (int k = 0; k < fp::kNumNeighbors; ++k)
+          ++m[ne[k]];
+      } else {
+        lattice[o] = lab;
+        for (int k = 0; k < fp::kNumNeighbors; ++k)
+          ++m[no[k]];
+      }
+    }
+  }
+}
 } // namespace informed
 } // namespace lattice_glass
 

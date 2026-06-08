@@ -21,6 +21,7 @@
 
 #include "../fp_sampler.h"
 #include "../npy.hpp"
+#include "../informed_swap.h"
 
 #include <chrono>
 #include <cstdint>
@@ -34,6 +35,7 @@
 
 namespace fp = lattice_glass::fp;
 namespace cluster = lattice_glass::cluster;
+namespace informed = lattice_glass::informed;
 
 struct Options {
   int L = 16;
@@ -192,6 +194,16 @@ int main(int argc, char **argv) {
                 1.0 / s.betas.back(), 1.0 / s.betas.front());
     std::fflush(stdout);
 
+    // Occupied-neighbour counts (rebuilt from lattices; derivable, so not part
+    // of the checkpoint) and per-replica integer-dE exp tables for the fast swap.
+    std::vector<std::vector<int>> m(o.n_temps);
+    for (int t = 0; t < o.n_temps; ++t)
+      m[t] = informed::build_neighbor_counts(s.lattice[t], nn.data());
+    const int kOff = 256;
+    std::vector<std::vector<double>> etab(o.n_temps, std::vector<double>(kOff + 1));
+    for (int t = 0; t < o.n_temps; ++t)
+      for (int d = 0; d <= kOff; ++d)
+        etab[t][d] = std::exp(-s.betas[t] * d);
     auto t_start = std::chrono::steady_clock::now();
     auto last_ckpt = t_start;
     auto elapsed = [&]() {
@@ -204,8 +216,9 @@ int main(int argc, char **argv) {
       // Run exchange_every sweeps per replica, then one PT exchange round.
       for (int t = 0; t < o.n_temps; ++t)
         for (int k = 0; k < o.exchange_every; ++k)
-          fp::nonlocal_swap_sweep(s.lattice[t], (long double)s.betas[t], 0.0L,
-                                  nullptr, s.rng[t], nn.data());
+          informed::fast_swap_sweep(s.lattice[t], m[t], (long double)s.betas[t],
+                                    sites, etab[t].data(), kOff, s.rng[t],
+                                    nn.data());
       s.sweeps += o.exchange_every;
 
       // Replica exchange on alternating adjacent pairs.
@@ -217,7 +230,8 @@ int main(int argc, char **argv) {
         const double arg = (s.betas[t] - s.betas[t + 1]) * (ea - eb);
         ++s.exch_attempts;
         if (arg >= 0.0 || uni(s.exch_rng) < std::exp(arg)) {
-          std::swap(s.lattice[t], s.lattice[t + 1]); // exchange configs, keep beta slots
+          std::swap(s.lattice[t], s.lattice[t + 1]); // exchange configs + counts
+          std::swap(m[t], m[t + 1]);
           ++s.exch_accepts;
         }
       }
