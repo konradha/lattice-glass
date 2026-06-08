@@ -146,6 +146,8 @@ def main() -> int:
     ap.add_argument("--quick", action="store_true", help="tiny smoke grid")
     ap.add_argument("--hard", action="store_true",
                     help="resolve-or-bust hard-regime grid (L=8 beta 2.5,3.0)")
+    ap.add_argument("--t04", action="store_true",
+                    help="extra seeds at T=0.4 (L=8 beta 2.5) for confidence")
     args = ap.parse_args()
 
     if not os.path.exists(BINARY):
@@ -166,6 +168,11 @@ def main() -> int:
         for seed in (1, 2):
             c = PER_BETA_HARD[2.0]
             jobs.append((10, 2.0, seed, c["production"], c["sample_every"]))
+    elif args.t04:
+        # Decisive T=0.4 point: 6 seeds at a budget large enough to resolve the
+        # blind arm for most realizations, settling the per-sweep verdict there.
+        for seed in (1, 2, 3, 4, 5, 6):
+            jobs.append((8, 2.5, seed, 1000000, 48))
     else:
         # L=8 full scan, 4 seeds; L=10 confirmatory at the hard end, 2 seeds.
         for beta in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5):
