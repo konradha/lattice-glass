@@ -1,0 +1,47 @@
+# build artifacts
+to_omp
+measure_rng
+tests/test_exchange_delta
+tests/test_species_reduction
+tests/test_balanced_cluster
+tests/test_reference_cancellation
+experiments/pilot_balanced_cluster
+experiments/cluster_diagnostics
+experiments/fp_efficiency
+experiments/occupancy_efficiency
+tests/test_collective_moves
+tests/test_lifted_vacancy
+tests/test_lifted_swap
+tests/test_informed_swap
+tests/test_checkpoint_portability
+experiments/informed_swap_efficiency
+
+# python
+__pycache__/
+*.pyc
+
+# campaign outputs
+experiments/campaign_results*.csv
+experiments/campaign*.log
+experiments/campaign*.pid
+experiments/campaign*.err
+experiments/occupancy_results*.csv
+experiments/occupancy*.log
+experiments/occupancy*.pid
+experiments/occupancy*.err
+experiments/informed_results*.csv
+experiments/informed*.log
+experiments/informed*.pid
+experiments/informed*.err
+experiments/mtm_*.log
+experiments/mtm_*.done
+experiments/production_sampler
+experiments/bench_swap
+*.npy
+*.bin
+*.bin.tmp
+
+# distributed campaign runtime
+*.db
+*.db-wal
+*.db-journal
