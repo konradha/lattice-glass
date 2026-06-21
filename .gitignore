@@ -13,6 +13,7 @@ tests/test_collective_moves
 tests/test_lifted_vacancy
 tests/test_lifted_swap
 tests/test_informed_swap
+tests/test_checkpoint_portability
 experiments/informed_swap_efficiency
 
 # python
@@ -39,3 +40,8 @@ experiments/bench_swap
 *.npy
 *.bin
 *.bin.tmp
+
+# distributed campaign runtime
+*.db
+*.db-wal
+*.db-journal

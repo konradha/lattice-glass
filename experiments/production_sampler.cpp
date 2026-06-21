@@ -22,6 +22,7 @@
 #include "../fp_sampler.h"
 #include "../npy.hpp"
 #include "../informed_swap.h"
+#include "production_checkpoint.h"
 
 #include <chrono>
 #include <cstdint>
@@ -36,6 +37,7 @@
 namespace fp = lattice_glass::fp;
 namespace cluster = lattice_glass::cluster;
 namespace informed = lattice_glass::informed;
+namespace prod = lattice_glass::prod;
 
 struct Options {
   int L = 16;
@@ -79,80 +81,7 @@ static Options parse(int argc, char **argv) {
   return o;
 }
 
-struct State {
-  std::vector<double> betas;                       // per replica
-  std::vector<std::vector<uint8_t>> lattice;       // per replica
-  std::vector<std::mt19937> rng;                   // per replica
-  std::mt19937 exch_rng;
-  long long sweeps = 0;                            // sweeps done per replica
-  std::vector<std::vector<uint8_t>> configs;       // [temp] flattened configs
-  std::vector<int> collected;                      // per temp
-  long long exch_attempts = 0, exch_accepts = 0;
-};
-
-static void write_pod(std::ofstream &f, const void *p, size_t n) {
-  f.write(reinterpret_cast<const char *>(p), n);
-}
-static void read_pod(std::ifstream &f, void *p, size_t n) {
-  f.read(reinterpret_cast<char *>(p), n);
-}
-static void write_rng(std::ofstream &f, std::mt19937 &g) {
-  std::ostringstream ss; ss << g; std::string s = ss.str();
-  uint32_t len = static_cast<uint32_t>(s.size());
-  write_pod(f, &len, 4); f.write(s.data(), len);
-}
-static void read_rng(std::ifstream &f, std::mt19937 &g) {
-  uint32_t len; read_pod(f, &len, 4);
-  std::string s(len, '\0'); f.read(&s[0], len);
-  std::istringstream ss(s); ss >> g;
-}
-
-static const uint32_t kMagic = 0x4E484C47; // "NHLG"
-
-static void checkpoint(const Options &o, State &s, const std::string &tmp) {
-  std::ofstream f(tmp, std::ios::binary);
-  if (!f) throw std::runtime_error("cannot open checkpoint " + tmp);
-  uint32_t magic = kMagic; int L = o.L, nt = o.n_temps;
-  write_pod(f, &magic, 4); write_pod(f, &L, 4); write_pod(f, &nt, 4);
-  write_pod(f, &s.sweeps, 8);
-  write_pod(f, &s.exch_attempts, 8); write_pod(f, &s.exch_accepts, 8);
-  for (int t = 0; t < nt; ++t) {
-    write_pod(f, &s.betas[t], 8);
-    write_pod(f, s.lattice[t].data(), s.lattice[t].size());
-    write_rng(f, s.rng[t]);
-    int c = s.collected[t]; write_pod(f, &c, 4);
-    write_pod(f, s.configs[t].data(), s.configs[t].size());
-  }
-  write_rng(f, s.exch_rng);
-  f.flush(); f.close();
-  std::rename(tmp.c_str(), o.ckpt.c_str()); // atomic replace
-}
-
-static bool restore(const Options &o, State &s) {
-  std::ifstream f(o.ckpt, std::ios::binary);
-  if (!f) return false;
-  uint32_t magic; int L, nt;
-  read_pod(f, &magic, 4); read_pod(f, &L, 4); read_pod(f, &nt, 4);
-  if (magic != kMagic || L != o.L || nt != o.n_temps)
-    throw std::runtime_error("checkpoint mismatch (L/n_temps/magic)");
-  const int sites = o.L * o.L * o.L;
-  read_pod(f, &s.sweeps, 8);
-  read_pod(f, &s.exch_attempts, 8); read_pod(f, &s.exch_accepts, 8);
-  s.betas.resize(nt); s.lattice.assign(nt, {}); s.rng.resize(nt);
-  s.configs.assign(nt, {}); s.collected.assign(nt, 0);
-  for (int t = 0; t < nt; ++t) {
-    read_pod(f, &s.betas[t], 8);
-    s.lattice[t].resize(sites); read_pod(f, s.lattice[t].data(), sites);
-    read_rng(f, s.rng[t]);
-    int c; read_pod(f, &c, 4); s.collected[t] = c;
-    s.configs[t].resize(static_cast<size_t>(c) * sites);
-    read_pod(f, s.configs[t].data(), s.configs[t].size());
-  }
-  read_rng(f, s.exch_rng);
-  return static_cast<bool>(f);
-}
-
-static void dump_npy(const Options &o, const State &s) {
+static void dump_npy(const Options &o, const prod::State &s) {
   const unsigned long sites = static_cast<unsigned long>(o.L) * o.L * o.L;
   for (int t = 0; t < o.n_temps; ++t) {
     if (s.collected[t] == 0) continue;
@@ -174,8 +103,8 @@ int main(int argc, char **argv) {
     if (n1 < 0 || n2 < 0 || np > sites) throw std::invalid_argument("bad composition");
     const std::vector<int> nn = fp::cubic_neighbors(o.L);
 
-    State s;
-    const bool resumed = restore(o, s);
+    prod::State s;
+    const bool resumed = prod::restore(s, o.L, o.n_temps, o.ckpt);
     if (!resumed) {
       s.betas.resize(o.n_temps);
       s.lattice.resize(o.n_temps);
@@ -210,7 +139,6 @@ int main(int argc, char **argv) {
       return std::chrono::duration<double>(std::chrono::steady_clock::now() - t_start).count();
     };
 
-    const std::string tmp = o.ckpt + ".tmp";
     bool done = false;
     while (!done) {
       // Run exchange_every sweeps per replica, then one PT exchange round.
@@ -254,7 +182,7 @@ int main(int argc, char **argv) {
           std::chrono::duration<double>(std::chrono::steady_clock::now() - last_ckpt).count()
           > o.checkpoint_secs;
       if (done || wall_hit || ckpt_due) {
-        checkpoint(o, s, tmp);
+        prod::checkpoint(s, o.L, o.n_temps, o.ckpt);
         dump_npy(o, s);
         last_ckpt = std::chrono::steady_clock::now();
         const double ecold = (double)fp::total_energy_int(s.lattice.front(), nn.data()) / sites;
