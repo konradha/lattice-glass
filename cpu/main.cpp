@@ -164,7 +164,6 @@ int main(int argc, char** argv) {
 
     while (sampler.sweeps_done < o.sweeps && !g_stop) {
       uint64_t chunk = static_cast<uint64_t>(std::max(1, o.checkpoint_every));
-      if (chunk > 1000) chunk = 1000;
       chunk = std::min<uint64_t>(chunk, o.sweeps - sampler.sweeps_done);
       for (uint64_t i=0; i<chunk && !g_stop; ++i) {
         const int accepted = sampler.sweep();
