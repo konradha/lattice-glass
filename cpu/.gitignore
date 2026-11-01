@@ -1,0 +1,5 @@
+lattice_pt
+bench_moves
+tests/test_all
+*.o
+__pycache__/
