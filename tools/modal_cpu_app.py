@@ -5,8 +5,6 @@ from pathlib import Path
 
 import modal
 
-import os
-
 app = modal.App("lattice-cpu-campaign")
 CPU = int(os.environ.get("MODAL_CPU", "32"))
 LADDERS = int(os.environ.get("MODAL_LADDERS", "32"))
@@ -14,7 +12,7 @@ image = (
     modal.Image.debian_slim()
     .apt_install("build-essential")
     .add_local_dir("cpu", "/root/cpu", copy=True)
-    .run_commands("cd /root/cpu && make clean && make CXX=g++ lattice_pt")
+    .run_commands("cd /root/cpu && make clean && make CXX=g++ lattice_single")
 )
 volume = modal.Volume.from_name("lattice-runs", create_if_missing=True)
 
@@ -31,7 +29,7 @@ def run_ladders(run_name: str, ladder_ids: list[int], cfg_json: str):
     root = Path("/runs") / run_name
     root.mkdir(parents=True, exist_ok=True)
     (root / "campaign.json").write_text(json.dumps(cfg, indent=2) + "\n")
-    binary = "/root/cpu/lattice_pt"
+    binary = "/root/cpu/lattice_single"
     procs = []
     status = {}
     for lid in ladder_ids:
@@ -43,13 +41,11 @@ def run_ladders(run_name: str, ladder_ids: list[int], cfg_json: str):
         args = [
             binary,
             "--run-dir", str(run_dir),
-            "--ntemps", str(cfg["ntemps"]),
-            "--beta-min", str(cfg["beta_min"]),
-            "--beta-max", str(cfg["beta_max"]),
+            "--beta", str(cfg["beta"]),
             "--sweeps", str(cfg["sweeps"]),
-            "--exchange-every", str(cfg["exchange_every"]),
             "--sample-every", str(cfg["sample_every"]),
             "--checkpoint-every", str(cfg["checkpoint_every"]),
+            "--history-every", str(cfg["history_every"]),
             "--local", str(cfg["local"]),
             "--seed", str(cfg["seed"] + 104729 * lid),
         ]
@@ -67,27 +63,15 @@ def run_ladders(run_name: str, ladder_ids: list[int], cfg_json: str):
     return {"run": run_name, "ladders": len(ladder_ids), "complete": complete, "status": status}
 
 
-@app.function(image=image, timeout=600)
-def inspect_image():
-    import subprocess
-    r = subprocess.run(["bash", "-lc", "find /root -maxdepth 3 -type f | head -50; echo ---; ls -l /root/cpu || true; echo ---; cd /root/cpu && make CXX=g++ lattice_pt 2>&1 | tail -30"],
-                       capture_output=True, text=True)
-    print(r.stdout)
-    print(r.stderr)
-    return r.stdout + r.stderr
-
-
 @app.local_entrypoint()
 def main():
-    run_name = os.environ.get("RUN_NAME", "smoke32")
+    run_name = os.environ.get("RUN_NAME", "fixed_beta")
     cfg = {
-        "ntemps": 4,
-        "beta_min": 0.5,
-        "beta_max": 2.0,
-        "sweeps": int(os.environ.get("SWEEPS", "1000")),
-        "exchange_every": 10,
+        "beta": float(os.environ.get("BETA", "2.0")),
+        "sweeps": int(os.environ.get("SWEEPS", "100000")),
         "sample_every": 10,
         "checkpoint_every": 1000,
+        "history_every": int(os.environ.get("HISTORY_EVERY", "100")),
         "local": 50,
         "seed": 1,
     }

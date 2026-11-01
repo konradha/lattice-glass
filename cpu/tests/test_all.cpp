@@ -1,11 +1,9 @@
 #include "../lattice.hpp"
 
-#include <cassert>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <random>
 
 using namespace lg;
 
@@ -35,7 +33,7 @@ static void test_kernel() {
 static void test_local_moves() {
   State S(901);
   Rng r(902);
-  ExpTable table(2.5);
+  ExpTable table(2.0);
   int energy = S.full_energy();
   for (int i=0;i<2000;i++) {
     try_move(S, r, table, 100, energy);
@@ -44,55 +42,45 @@ static void test_local_moves() {
   CHECK(energy == S.full_energy(), "local move energy");
 }
 
-static PtLadder make_ladder(uint64_t seed) {
-  PtConfig c;
-  c.ntemps = 3;
-  c.beta_min = 0.5;
-  c.beta_max = 2.0;
-  c.exchange_every = 2;
+static Sampler make_sampler() {
+  SamplerConfig c;
+  c.beta = 2.0;
+  c.local_pct = 50;
   c.sample_every = 2;
   c.hist_bins = 2048;
   c.hist_width = 128;
-  c.seed = seed;
+  c.seed = 4242;
   c.total_sweeps = 1000;
-  c.local_pct = 50;
-  return PtLadder(c);
+  return Sampler(c);
 }
 
 static void test_checkpoint() {
-  auto dir = std::filesystem::temp_directory_path() / "lg_cpu_test";
+  auto dir = std::filesystem::temp_directory_path() / "lg_single_test";
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   const std::string path = (dir / "checkpoint.bin").string();
 
-  PtLadder a = make_ladder(4242);
+  Sampler a = make_sampler();
   for (int i=0;i<40;i++) a.sweep();
   save_checkpoint(path, a);
 
-  PtLadder b([]{ PtConfig c; c.ntemps=1; c.beta_min=0.1; c.beta_max=0.1; return PtLadder(c); }());
+  Sampler b = make_sampler();
   CHECK(load_checkpoint(path, b), "checkpoint loads");
   CHECK(a.sweeps_done == b.sweeps_done, "checkpoint sweeps");
-  CHECK(a.reps.size() == b.reps.size(), "checkpoint ntemps");
-  for (size_t i=0;i<a.reps.size();i++) {
-    CHECK(a.reps[i].state.st == b.reps[i].state.st, "checkpoint state");
-    CHECK(a.reps[i].energy == b.reps[i].energy, "checkpoint energy");
-    CHECK(std::memcmp(a.reps[i].rng.s, b.reps[i].rng.s, sizeof(a.reps[i].rng.s)) == 0,
-          "checkpoint rng");
-    CHECK(a.reps[i].hist == b.reps[i].hist, "checkpoint hist");
-  }
+  CHECK(a.state.st == b.state.st, "checkpoint state");
+  CHECK(a.energy == b.energy, "checkpoint energy");
+  CHECK(std::memcmp(a.rng.s, b.rng.s, sizeof(a.rng.s)) == 0, "checkpoint rng");
+  CHECK(a.hist == b.hist, "checkpoint hist");
+  CHECK(a.cfg.beta == b.cfg.beta, "checkpoint beta");
 
   for (int i=0;i<40;i++) { a.sweep(); b.sweep(); }
-  for (size_t i=0;i<a.reps.size();i++) {
-    CHECK(a.reps[i].state.st == b.reps[i].state.st, "resume trajectory");
-    CHECK(a.reps[i].energy == b.reps[i].energy, "resume energy");
-  }
+  CHECK(a.state.st == b.state.st, "resume trajectory");
+  CHECK(a.energy == b.energy, "resume energy");
 
-  // Corrupt one payload byte and ensure the checksum rejects it.
   {
     std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
-    f.seekp(static_cast<std::streamoff>(sizeof(CheckpointHeader) + 100));
-    char c; f.seekg(static_cast<std::streamoff>(sizeof(CheckpointHeader) + 100)); f.get(c);
-    c ^= 0x5a;
+    f.seekg(static_cast<std::streamoff>(sizeof(CheckpointHeader) + 100));
+    char c; f.get(c); c ^= 0x5a;
     f.seekp(static_cast<std::streamoff>(sizeof(CheckpointHeader) + 100));
     f.put(c); f.close();
   }
@@ -100,35 +88,21 @@ static void test_checkpoint() {
   std::filesystem::remove_all(dir);
 }
 
-static void test_pt_and_reweight() {
-  PtConfig c;
-  c.ntemps = 4;
-  c.beta_min = 0.5;
-  c.beta_max = 2.0;
-  c.exchange_every = 5;
-  c.sample_every = 5;
-  c.hist_bins = 4096;
-  c.hist_width = 64;
-  c.seed = 991;
-  c.total_sweeps = 2000;
-  c.local_pct = 50;
-  PtLadder lad(c);
-  for (int i=0;i<2000;i++) lad.sweep();
-  CHECK(lad.sweeps_done == 2000, "pt sweeps");
-  for (int i=0;i<c.ntemps;i++) {
-    CHECK(lad.reps[i].energy == lad.reps[i].state.full_energy(), "pt incremental energy");
-    auto w = lad.reweight(0, lad.reps[i].beta);
-    double sum = 0; for (double v : w) sum += v;
-    CHECK(std::abs(sum - 1.0) < 1e-9, "reweight normalization");
-    for (double v : w) CHECK(std::isfinite(v), "reweight finite");
-  }
+static void test_histogram() {
+  Sampler s = make_sampler();
+  for (int i=0;i<100;i++) s.sweep();
+  CHECK(s.samples_done == 50, "sample count");
+  long long total = 0;
+  for (auto v : s.hist) total += v;
+  CHECK(total == 50, "histogram total");
+  CHECK(s.energy == s.state.full_energy(), "sampler energy");
 }
 
 int main() {
   test_kernel();
   test_local_moves();
   test_checkpoint();
-  test_pt_and_reweight();
+  test_histogram();
   if (failures == 0) std::printf("ALL TESTS PASS\n");
   else std::printf("%d FAILURES\n", failures);
   return failures == 0 ? 0 : 1;

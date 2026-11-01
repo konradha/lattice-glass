@@ -1,5 +1,5 @@
 #pragma once
-// CPU lattice-glass engine, parallel tempering, reweighting, and checkpoints.
+// CPU lattice-glass engine, fixed-beta chains, history, and checkpoints.
 // L=25, 1-byte state (2-bit type + 6-bit neighbor mask), fixed composition.
 
 #include <algorithm>
@@ -233,114 +233,52 @@ inline bool try_move(State& S, Rng& rng, const ExpTable& table, int local_pct,
 }
 
 // ---------------------------------------------------------------------------
-// Parallel tempering
+// Fixed-beta single-chain sampler
 // ---------------------------------------------------------------------------
-struct PtConfig {
-  int ntemps = 8;
-  double beta_min = 0.1;
-  double beta_max = 3.5;
+struct SamplerConfig {
+  double beta = 2.0;
   int local_pct = 50;
-  int exchange_every = 10;
   int sample_every = 10;
   int hist_bins = 8192;
-  int hist_width = 64;       // energy units per bin
+  int hist_width = 64;
   uint64_t seed = 1;
   uint64_t total_sweeps = 1000000;
 };
 
-struct Replica {
+struct Sampler {
+  SamplerConfig cfg;
   State state;
   Rng rng;
-  double beta = 1.0;
-  int energy = 0;
   ExpTable table;
+  int energy = 0;
+  int accepted_total = 0;
+  int accepted_last = 0;
   std::vector<uint32_t> hist;
-  Replica() : table(1.0) {}
-  Replica(double b, uint64_t seed, int bins)
-      : state(seed), rng(seed ^ 0x9e3779b97f4a7c15ULL), beta(b), table(b), hist(bins, 0) {
-    energy = state.full_energy();
-  }
-};
-
-struct PtLadder {
-  PtConfig cfg;
-  std::vector<double> betas;
-  std::vector<Replica> reps;
   uint64_t sweeps_done = 0;
   uint64_t samples_done = 0;
 
-  explicit PtLadder(const PtConfig& c) : cfg(c) {
-    if (cfg.ntemps < 1) throw std::runtime_error("ntemps must be >= 1");
-    if (cfg.beta_min <= 0 || cfg.beta_max <= 0) throw std::runtime_error("betas must be positive");
-    betas.resize(cfg.ntemps);
-    if (cfg.ntemps == 1) {
-      betas[0] = cfg.beta_max;
-    } else {
-      const double r = std::pow(cfg.beta_max / cfg.beta_min, 1.0 / (cfg.ntemps - 1));
-      betas[0] = cfg.beta_min;
-      for (int i=1;i<cfg.ntemps;i++) betas[i] = betas[i-1] * r;
-    }
-    reps.reserve(cfg.ntemps);
-    for (int i=0;i<cfg.ntemps;i++)
-      reps.emplace_back(betas[i], cfg.seed + 0x9e37u * static_cast<uint64_t>(i), cfg.hist_bins);
+  explicit Sampler(const SamplerConfig& c)
+      : cfg(c), state(c.seed), rng(c.seed ^ 0x9e3779b97f4a7c15ULL),
+        table(c.beta), hist(c.hist_bins, 0) {
+    energy = state.full_energy();
   }
 
-  void sweep() {
-    for (auto& r : reps) {
-      for (int i=0;i<N;i++) try_move(r.state, r.rng, r.table, cfg.local_pct, r.energy);
-    }
+  int sweep() {
+    int accepted = 0;
+    for (int i=0;i<N;i++) if (try_move(state, rng, table, cfg.local_pct, energy)) ++accepted;
+    accepted_last = accepted;
+    accepted_total += accepted;
     ++sweeps_done;
-    if (cfg.ntemps > 1 && cfg.exchange_every > 0 && sweeps_done % cfg.exchange_every == 0)
-      exchange();
-    if (cfg.sample_every > 0 && sweeps_done % cfg.sample_every == 0)
-      sample();
-  }
-
-  void exchange() {
-    for (int i=0;i<cfg.ntemps-1;i++) {
-      Replica& a = reps[i];
-      Replica& b = reps[i+1];
-      const double arg = (a.beta - b.beta) * static_cast<double>(a.energy - b.energy);
-      bool ok = arg >= 0.0;
-      if (!ok) ok = std::log(a.rng.uniform()) < arg;
-      if (ok) {
-        std::swap(a.state, b.state);
-        std::swap(a.energy, b.energy);
-      }
-    }
+    if (cfg.sample_every > 0 && sweeps_done % cfg.sample_every == 0) sample();
+    return accepted;
   }
 
   void sample() {
-    for (auto& r : reps) {
-      int bin = r.energy / cfg.hist_width;
-      if (bin < 0) bin = 0;
-      if (bin >= cfg.hist_bins) bin = cfg.hist_bins - 1;
-      ++r.hist[bin];
-    }
+    int bin = energy / cfg.hist_width;
+    if (bin < 0) bin = 0;
+    if (bin >= cfg.hist_bins) bin = cfg.hist_bins - 1;
+    ++hist[bin];
     ++samples_done;
-  }
-
-  // Reweight replica i's histogram to beta_target. Returns bin probabilities.
-  std::vector<double> reweight(int i, double beta_target) const {
-    const auto& r = reps[i];
-    std::vector<double> w(cfg.hist_bins, 0.0);
-    std::vector<double> logw(cfg.hist_bins, -std::numeric_limits<double>::infinity());
-    double maxlog = -std::numeric_limits<double>::infinity();
-    for (int b=0;b<cfg.hist_bins;b++) {
-      if (r.hist[b] == 0) continue;
-      const double e = (static_cast<double>(b) + 0.5) * cfg.hist_width;
-      logw[b] = std::log(static_cast<double>(r.hist[b])) - (beta_target - r.beta) * e;
-      if (logw[b] > maxlog) maxlog = logw[b];
-    }
-    if (!std::isfinite(maxlog)) return w;
-    double norm = 0.0;
-    for (int b=0;b<cfg.hist_bins;b++) {
-      if (r.hist[b] == 0) continue;
-      w[b] = std::exp(logw[b] - maxlog);
-      norm += w[b];
-    }
-    if (norm > 0) for (auto& v : w) v /= norm;
-    return w;
   }
 };
 
@@ -352,20 +290,18 @@ inline uint64_t fnv1a(const uint8_t* p, size_t n) {
   for (size_t i=0;i<n;i++) { h ^= p[i]; h *= 1099511628211ULL; }
   return h;
 }
+
 struct CheckpointHeader {
-  uint64_t magic = 0x4c47505431ULL; // LGPT1
-  uint32_t version = 1;
-  uint32_t ntemps = 0;
+  uint64_t magic = 0x4c47534331ULL; // LGSC1
+  uint32_t version = 4;
+  uint32_t hist_bins = 0;
   uint64_t sweeps_done = 0;
   uint64_t samples_done = 0;
   uint64_t seed = 0;
-  uint32_t hist_bins = 0;
   uint32_t hist_width = 0;
   int32_t local_pct = 0;
-  int32_t exchange_every = 0;
-  int32_t sample_every = 0;
+  double beta = 0.0;
   uint64_t total_sweeps = 0;
-  double beta_min = 0, beta_max = 0;
   uint64_t payload_bytes = 0;
   uint64_t checksum = 0;
 };
@@ -387,33 +323,29 @@ inline void read_all(int fd, void* data, size_t n) {
   }
 }
 
-inline void save_checkpoint(const std::string& path, const PtLadder& lad) {
+inline void save_checkpoint(const std::string& path, const Sampler& s) {
   std::vector<uint8_t> payload;
   auto put = [&](const void* p, size_t n) {
     const uint8_t* q = static_cast<const uint8_t*>(p);
     payload.insert(payload.end(), q, q + n);
   };
-  put(lad.betas.data(), lad.betas.size() * sizeof(double));
-  for (const auto& r : lad.reps) {
-    put(&r.beta, sizeof(double));
-    put(&r.energy, sizeof(int32_t));
-    put(r.state.st.data(), r.state.st.size());
-    put(r.rng.s, sizeof(r.rng.s));
-    put(r.hist.data(), r.hist.size() * sizeof(uint32_t));
-  }
+  const int32_t energy = s.energy;
+  const int64_t accepted_total = s.accepted_total;
+  put(&energy, sizeof(energy));
+  put(&accepted_total, sizeof(accepted_total));
+  put(s.state.st.data(), s.state.st.size());
+  put(s.rng.s, sizeof(s.rng.s));
+  put(s.hist.data(), s.hist.size() * sizeof(uint32_t));
+
   CheckpointHeader h;
-  h.ntemps = static_cast<uint32_t>(lad.cfg.ntemps);
-  h.sweeps_done = lad.sweeps_done;
-  h.samples_done = lad.samples_done;
-  h.seed = lad.cfg.seed;
-  h.hist_bins = static_cast<uint32_t>(lad.cfg.hist_bins);
-  h.hist_width = static_cast<uint32_t>(lad.cfg.hist_width);
-  h.local_pct = lad.cfg.local_pct;
-  h.exchange_every = lad.cfg.exchange_every;
-  h.sample_every = lad.cfg.sample_every;
-  h.total_sweeps = lad.cfg.total_sweeps;
-  h.beta_min = lad.cfg.beta_min;
-  h.beta_max = lad.cfg.beta_max;
+  h.hist_bins = static_cast<uint32_t>(s.cfg.hist_bins);
+  h.sweeps_done = s.sweeps_done;
+  h.samples_done = s.samples_done;
+  h.seed = s.cfg.seed;
+  h.hist_width = static_cast<uint32_t>(s.cfg.hist_width);
+  h.local_pct = s.cfg.local_pct;
+  h.beta = s.cfg.beta;
+  h.total_sweeps = s.cfg.total_sweeps;
   h.payload_bytes = payload.size();
   h.checksum = fnv1a(payload.data(), payload.size());
 
@@ -431,47 +363,45 @@ inline void save_checkpoint(const std::string& path, const PtLadder& lad) {
   }
   ::rename(path.c_str(), prev.c_str());
   if (::rename(tmp.c_str(), path.c_str()) != 0) throw std::runtime_error("rename checkpoint failed");
-  // Best-effort directory durability.
   const std::string dir = std::filesystem::path(path).parent_path().string();
   int dfd = ::open(dir.empty() ? "." : dir.c_str(), O_RDONLY);
   if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }
 }
 
-inline bool load_checkpoint(const std::string& path, PtLadder& lad) {
+inline bool load_checkpoint(const std::string& path, Sampler& s) {
   int fd = ::open(path.c_str(), O_RDONLY);
   if (fd < 0) return false;
   CheckpointHeader h;
   try {
     read_all(fd, &h, sizeof(h));
-    if (h.magic != 0x4c47505431ULL || h.version != 1) { ::close(fd); return false; }
+    if (h.magic != 0x4c47534331ULL || h.version != 4) { ::close(fd); return false; }
     std::vector<uint8_t> payload(h.payload_bytes);
     read_all(fd, payload.data(), payload.size());
     ::close(fd);
     if (fnv1a(payload.data(), payload.size()) != h.checksum) return false;
-    PtConfig c = lad.cfg;
-    c.ntemps = static_cast<int>(h.ntemps);
-    c.seed = h.seed; c.hist_bins = static_cast<int>(h.hist_bins);
-    c.hist_width = static_cast<int>(h.hist_width); c.local_pct = h.local_pct;
-    c.exchange_every = h.exchange_every; c.sample_every = h.sample_every;
+
+    SamplerConfig c;
+    c.beta = h.beta;
+    c.local_pct = h.local_pct;
+    c.hist_bins = static_cast<int>(h.hist_bins);
+    c.hist_width = static_cast<int>(h.hist_width);
+    c.seed = h.seed;
     c.total_sweeps = h.total_sweeps;
-    c.beta_min = h.beta_min; c.beta_max = h.beta_max;
-    lad = PtLadder(c);
-    lad.sweeps_done = h.sweeps_done;
-    lad.samples_done = h.samples_done;
+    s = Sampler(c);
+    s.sweeps_done = h.sweeps_done;
+    s.samples_done = h.samples_done;
     size_t off = 0;
     auto get = [&](void* p, size_t n) {
       if (off + n > payload.size()) throw std::runtime_error("truncated checkpoint");
       std::memcpy(p, payload.data() + off, n); off += n;
     };
-    get(lad.betas.data(), lad.betas.size() * sizeof(double));
-    for (auto& r : lad.reps) {
-      get(&r.beta, sizeof(double));
-      get(&r.energy, sizeof(int32_t));
-      get(r.state.st.data(), r.state.st.size());
-      get(r.rng.s, sizeof(r.rng.s));
-      get(r.hist.data(), r.hist.size() * sizeof(uint32_t));
-      r.table = ExpTable(r.beta);
-    }
+    get(&s.energy, sizeof(int32_t));
+    int64_t accepted_total = 0;
+    get(&accepted_total, sizeof(accepted_total));
+    s.accepted_total = static_cast<int>(accepted_total);
+    get(s.state.st.data(), s.state.st.size());
+    get(s.rng.s, sizeof(s.rng.s));
+    get(s.hist.data(), s.hist.size() * sizeof(uint32_t));
     return true;
   } catch (...) {
     ::close(fd);
@@ -482,29 +412,25 @@ inline bool load_checkpoint(const std::string& path, PtLadder& lad) {
 // ---------------------------------------------------------------------------
 // Output helpers
 // ---------------------------------------------------------------------------
-inline void save_configs(const std::string& dir, const PtLadder& lad) {
+inline void save_configs(const std::string& dir, const Sampler& s) {
   std::filesystem::create_directories(dir);
-  for (int i=0;i<lad.cfg.ntemps;i++) {
-    const std::string p = dir + "/beta_" + std::to_string(i) + ".bin";
-    const std::string tmp = p + ".tmp";
-    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    if (fd < 0) throw std::runtime_error("open config failed");
-    write_all(fd, lad.reps[i].state.st.data(), lad.reps[i].state.st.size());
-    ::fsync(fd); ::close(fd);
-    ::rename(tmp.c_str(), p.c_str());
-  }
+  const std::string p = dir + "/config.bin";
+  const std::string tmp = p + ".tmp";
+  int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) throw std::runtime_error("open config failed");
+  write_all(fd, s.state.st.data(), s.state.st.size());
+  ::fsync(fd); ::close(fd);
+  ::rename(tmp.c_str(), p.c_str());
 }
 
-inline void save_histograms(const std::string& path, const PtLadder& lad) {
+inline void save_histograms(const std::string& path, const Sampler& s) {
   std::ofstream out(path);
   out << "beta,bin,energy,count\n";
-  for (int i=0;i<lad.cfg.ntemps;i++) {
-    for (int b=0;b<lad.cfg.hist_bins;b++) {
-      if (lad.reps[i].hist[b] == 0) continue;
-      out << lad.reps[i].beta << ',' << b << ','
-          << (static_cast<double>(b) + 0.5) * lad.cfg.hist_width << ','
-          << lad.reps[i].hist[b] << '\n';
-    }
+  for (int b=0;b<s.cfg.hist_bins;b++) {
+    if (s.hist[b] == 0) continue;
+    out << s.cfg.beta << ',' << b << ','
+        << (static_cast<double>(b) + 0.5) * s.cfg.hist_width << ','
+        << s.hist[b] << '\n';
   }
 }
 

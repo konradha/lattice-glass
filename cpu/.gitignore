@@ -1,4 +1,5 @@
 lattice_pt
+lattice_single
 bench_moves
 tests/test_all
 *.o

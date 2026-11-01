@@ -1,42 +1,43 @@
-# CPU PT campaign library
+# CPU fixed-beta campaign library
 
 L=25 lattice glass with:
 - packed 1-byte state (2-bit type, 6-bit neighbor mask)
 - arithmetic neighbors, no neighbor table
 - Metropolis local and nonlocal swaps (nonlocal Manhattan distance >= 3)
 - exact incremental energy
-- parallel tempering with adjacent exchange
-- energy histograms and histogram reweighting
+- fixed beta per chain, independent chains
+- per-chain history: sweep, energy, accepted, accepted_total
+- log-spaced full checkpoints (restartable snapshots)
 - atomic, checksummed checkpoints and resume
-- log-spaced restartable snapshots
-- one PT ladder per process; many ladders per machine
+- local-move validation on saved configs
 
-Measured on Apple M3, single core:
-- 46.4 ns/proposal for the far-swap engine
-- about 65 ns/proposal for a 4-temperature PT ladder including exchange and sampling
+No parallel tempering. No reweighting.
+
+Measured on Apple M3, single core: **46.4 ns/proposal**, **0.725 ms/sweep**.
 
 ## Build
 
 ```bash
 cd cpu
-make            # lattice_pt
-make test       # kernel, checkpoint, PT, reweighting tests
+make            # lattice_single
+make test       # kernel, local moves, checkpoint, history, histogram
 make bench      # proposal benchmark
 ```
 
-## One ladder
+## One chain
 
 ```bash
-./cpu/lattice_pt --run-dir runs/ladder_000000 \
-  --ntemps 8 --beta-min 0.1 --beta-max 3.5 \
-  --sweeps 10000000 --exchange-every 10 --sample-every 10 \
-  --checkpoint-every 1000 --local 50 --seed 1
+./cpu/lattice_single --run-dir runs/ladder_000000 \
+  --beta 2.0 --sweeps 100000 \
+  --sample-every 10 --checkpoint-every 1000 --history-every 100 \
+  --local 50 --seed 1
 ```
 
 Resume:
 
 ```bash
-./cpu/lattice_pt --run-dir runs/ladder_000000 ... --sweeps 20000000 --resume
+./cpu/lattice_single --run-dir runs/ladder_000000 --beta 2.0 \
+  --sweeps 200000 --resume
 ```
 
 Outputs:
@@ -46,56 +47,52 @@ run-dir/
   manifest.txt
   checkpoint.bin          # latest, atomic replace
   checkpoint.bin.prev     # previous good checkpoint
+  history.bin             # per-chain time series
   snapshots/              # log-spaced full restarts
-  configs/beta_<i>.bin    # raw 1-byte states, one per temperature
-  hist.csv                # energy histograms per beta
+  configs/config.bin      # final 1-byte state
+  hist.csv                # energy histogram
   done.txt
 ```
 
-Checkpoints contain the full state, xoshiro RNG state, energy, betas, histograms,
-and cadence. `--resume` validates the FNV-1a checksum and the header, and falls
-back to `.prev` if the latest checkpoint is corrupt.
+`history.bin` records `(sweep, energy, accepted_since, accepted_total)`.
+On resume the file is truncated to the checkpoint sweep and continues.
 
-## Many ladders
+## Many chains
 
 ```bash
-python3 tools/run_campaign.py --run-root runs/campaign \
-  --ladders 128 --workers 64 \
-  --ntemps 8 --beta-min 0.1 --beta-max 3.5 \
-  --sweeps 1000000 --checkpoint-every 1000 --local 50
+python3 tools/run_campaign.py --run-root runs/beta2 \
+  --ladders 128 --workers 64 --beta 2.0 \
+  --sweeps 100000 --history-every 100 --checkpoint-every 1000
 ```
 
-Completed ladders are skipped. Incomplete ladders resume from `checkpoint.bin`.
+Completed chains are skipped. Incomplete chains resume from `checkpoint.bin`.
 
-Collect and reweight:
+Collect the per-chain history:
 
 ```bash
-python3 tools/collect.py --run-root runs/campaign
-python3 tools/reweight.py --hist runs/campaign/combined_hist.csv \
-  --targets 0,0.389,0.778,1.167,1.556,1.944,2.333,2.722,3.111,3.5
+python3 tools/collect_history.py --run-root runs/beta2 --configs
+python3 tools/collect.py --run-root runs/beta2
 ```
 
 ## Modal
 
 `tools/modal_cpu_app.py` builds the library in the image, mounts the
-`lattice-runs` Volume, and runs one ladder per core.
+`lattice-runs` Volume, and runs one fixed-beta chain per core.
 
 ```bash
-MODAL_CPU=32 MODAL_LADDERS=32 RUN_NAME=smoke32 SWEEPS=1000 \
-  micromamba run -n rsmi modal run tools/modal_cpu_app.py
+MODAL_CPU=64 MODAL_LADDERS=64 BETA=2.0 SWEEPS=100000 \
+  RUN_NAME=beta2_100k micromamba run -n rsmi modal run tools/modal_cpu_app.py
 ```
 
-Resume is the same command with the same `RUN_NAME`; completed ladders are
-skipped and incomplete ladders resume.
+Resume with the same command; completed chains are skipped.
 
-## Notes
+## Thermalization gate
 
-- PT costs `ntemps` sweeps per ladder. A 10-temperature ladder costs about
-  10x a single chain. Reweighting lets you simulate fewer temperatures and
-  interpolate the target grid.
-- The target grid `np.linspace(0, 3.5, 10)` is
-  `0, 0.389, 0.778, 1.167, 1.556, 1.944, 2.333, 2.722, 3.111, 3.5`.
-- For beta=0, the equilibrium distribution is uniform; sample it directly or
-  reweight from beta_min.
-- Checkpoint checksums detect corruption, not tampering. Files are 0600 and
-  written by atomic rename.
+Do not release configs from sweep count alone. Require:
+
+1. energy plateau after burn-in,
+2. independent-chain energy agreement,
+3. local-move energy drift on a validation subset,
+4. stable energy histogram.
+
+The history and snapshots are the evidence.
