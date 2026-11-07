@@ -13,7 +13,7 @@ The target is a per-config rate floor, not a total-work target. Splitting work a
 
 ## Verdict
 
-- GPU: viable. One config per SM. ~1.9 h per config. 1000 configs need roughly 8 H100-class GPUs for 2 h.
+- GPU: most credible. One config per SM, modeled near 1.9 h per config. 1000 configs need roughly 8 H100-class GPUs for 2 h. No GPU benchmark exists yet.
 - FPGA: not viable for thousands of configs at this rate. One config per engine is port-bound near 250M/s at 250 MHz, so it needs ~6 independent lanes per config. Shared-proposal SIMD couples configs and violates independence.
 - CPU: one config is 50+ h on one core. It cannot meet 2 h without within-config parallelization.
 
@@ -25,19 +25,32 @@ Affected set: endpoints plus their neighbors. For adjacent a,b on a cubic lattic
 
 The CPU sequential kernel is the reference. The parallel colored kernel has the same stationary distribution but a different trajectory and a different integrated autocorrelation time. If dynamics or tau are measured, this is a different model. If only equilibrium observables are needed, it is valid.
 
+## Exact 21-color schedule
+
+Astra supplied a valid fixed schedule that is simpler than a searched packing:
+
+- For positive x edges anchored at (x,y,z), color = (x + 3y + 5z) mod 21.
+- The 12 affected offsets have distinct residues.
+- Each color holds 21^2 = 441 independent proposals.
+- Process 21 colors for one axis: 21 x 441 = 9261 proposals.
+- Choose the axis uniformly, independent of state. All three axes make three sweeps.
+- Select forward or reverse phase order with equal probability to make the sweep reversible.
+
+This preserves the fixed-composition Boltzmann distribution. It does not preserve the original random-site/random-direction trajectory or tau. It is valid only for equilibrium observables unless tau is revalidated.
+
 ## GPU design
 
-- One config per CTA/SM. 256 threads, not one warp.
+- One config per CTA/SM. 512 threads, not one warp.
 - State: one byte per site, 9.26 KB per config. 1000 configs = 9.3 MB total.
 - Load config state into shared memory. Do not stream from HBM.
-- Build conflict-free batches of local swaps. Exact bound: at most 771 moves per batch; practical packing gives about 13 batches per sweep.
-- Round barrier after each batch. Distribution exact; trajectory differs from sequential CPU.
-- Per-config counter-based RNG. No shared proposal stream. No common random numbers.
-- No per-proposal atomics; batch writes are disjoint.
-- Per-config rate target: 1.286e9 proposals/s. One H100 SM is near 1.9 h for one config.
-- 1000 configs at 132 SMs/GPU = 7.6 waves. One GPU ~14.5 h. Eight GPUs ~1.8 h.
+- One 21-color sweep has 21 barriers and 9261 proposals.
+- Required time is 7.2 microseconds per sweep = 1.286e9 proposals/s/config.
+- Per-config counter-based RNG. No shared proposals, no common random numbers.
+- No per-proposal atomics; color writes are disjoint.
 
-Estimated campaign: 8 H100-class GPUs, about 2 h, thousands of configs only if 1000 at a time. 3000 configs need about 3 waves of 8 GPUs, ~5.4 h, or 24 GPUs for 2 h.
+All GPU timing below is a model, not a measurement. One config on one H100 SM is modeled near 1.9 h. 1000 configs at 132 SMs/GPU = 7.6 waves. One GPU is modeled near 14.5 h; eight GPUs near 1.8 h.
+
+Estimated campaign: 8 H100-class GPUs, about 2 h, 1000 configs at a time. 3000 configs need three waves, about 5.4 h, or 24 GPUs for 2 h. No GPU benchmark exists yet.
 
 ## FPGA design
 
