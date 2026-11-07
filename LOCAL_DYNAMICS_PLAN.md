@@ -65,6 +65,10 @@ A valid colored kernel preserves the fixed-composition Boltzmann distribution. I
 
 All GPU timing below is a model, not a measurement. One config on one H100 SM is modeled near 1.9 h. 1000 configs at 132 SMs/GPU = 7.6 waves. One GPU is modeled near 14.5 h; eight GPUs near 1.8 h.
 
+All 1,000 configs in 2 h require 1.286e12 proposals/s aggregate: 160.8G/s per GPU on 8 GPUs, or 1.22G/s per SM. State is only 9.26 MB for 1,000 configs, so capacity is not the limit. The limit is the serial RNG/read/energy/accept/write path and internal state traffic.
+
+Source-level state traffic is about 11 bytes/proposal; at full campaign rate that is about 14 TB/s, before transaction amplification. HBM cannot carry it. State must remain in SMEM/shared memory; HBM is only checkpoint/streaming.
+
 Estimated campaign: 8 H100-class GPUs, about 2 h, 1000 configs at a time. 3000 configs need three waves, about 5.4 h, or 24 GPUs for 2 h. No GPU benchmark exists yet.
 
 ## FPGA design
