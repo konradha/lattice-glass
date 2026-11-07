@@ -25,18 +25,33 @@ Affected set: endpoints plus their neighbors. For adjacent a,b on a cubic lattic
 
 The CPU sequential kernel is the reference. The parallel colored kernel has the same stationary distribution but a different trajectory and a different integrated autocorrelation time. If dynamics or tau are measured, this is a different model. If only equilibrium observables are needed, it is valid.
 
-## Exact 21-color schedule
+## Two correctness contracts
 
-Astra supplied a valid fixed schedule that is simpler than a searched packing:
+Keep these separate:
+
+1. CPU-exact: same proposal order, accept/reject results, state, and RNG state as `cpu/lattice.hpp`.
+2. Equilibrium-exact: same stationary distribution; proposal order and dynamics may change.
+
+The current golden model is not a local reference. Its `evaluate` rejects every adjacent pair as null, so it cannot test local moves. A local golden model is required before GPU/FPGA work.
+
+## Candidate 21-color schedule
+
+Astra proposed a fixed schedule:
 
 - For positive x edges anchored at (x,y,z), color = (x + 3y + 5z) mod 21.
 - The 12 affected offsets have distinct residues.
-- Each color holds 21^2 = 441 independent proposals.
-- Process 21 colors for one axis: 21 x 441 = 9261 proposals.
+- Each color holds 21^2 = 441 proposals.
+- 21 colors for one axis = 9261 proposals.
 - Choose the axis uniformly, independent of state. All three axes make three sweeps.
 - Select forward or reverse phase order with equal probability to make the sweep reversible.
 
-This preserves the fixed-composition Boltzmann distribution. It does not preserve the original random-site/random-direction trajectory or tau. It is valid only for equilibrium observables unless tau is revalidated.
+This is a candidate, not yet proven. The coloring must be checked on the move-conflict graph, not the site graph.
+
+Correct conflict rule: two moves may run concurrently only if their 12-site affected sets are disjoint. For bonds e,f, that is min torus Manhattan distance between endpoints >= 3. Ordinary checkerboard and ordinary edge coloring are insufficient.
+
+All pairs of the 27,783 undirected bonds need checking. If the 21-color construction fails any pair, it is invalid.
+
+A valid colored kernel preserves the fixed-composition Boltzmann distribution. It does not preserve the original random-site/random-direction trajectory or tau.
 
 ## GPU design
 
@@ -73,6 +88,8 @@ Estimated campaign: 8 H100-class GPUs, about 2 h, 1000 configs at a time. 3000 c
 - Kill the GPU route if one config on one SM cannot reach 1.286e9 proposals/s with exact batch writes.
 - Kill the FPGA route if one config needs more than one engine at the target rate, or if configs must share proposal addresses.
 - Kill any route if the required observable is the sequential trajectory or tau, not just the equilibrium distribution.
+- Kill the 21-color kernel if any same-color bond pair has a non-disjoint 12-site affected set.
+- Kill any GPU/FPGA route until a local C++ golden model and color-exhaustiveness test exist.
 
 ## Path forward
 
