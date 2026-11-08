@@ -1,3 +1,4 @@
+// DEPRECATED: this version leaves swapped-endpoint counts stale. Use poc/local_chain_opt.swift.
 import Foundation
 import Metal
 

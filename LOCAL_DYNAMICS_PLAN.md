@@ -195,3 +195,28 @@ Measured (M3, beta 2.8):
 CPU local single core: 12.6M/s. Persistent Metal is 13x faster for one config.
 
 Target 16G/s is 97x above this kernel. One CTA uses one of eight M3 GPU cores. The 441-edge color phase gives insufficient parallelism, and the in-phase work is memory/arithmetic heavy. Single-chain 16G/s is not reachable on this M3.
+
+## Corrected Metal results (2026-11-08)
+
+A real bug was found: swapped endpoints are neighbors of each other. Their cached counts must move c[a]-=d and c[b]+=d. The earlier `local_chain.swift` and `local_metal.swift` left them stale. They are deprecated. Corrected kernels:
+
+- `poc/local_chain_opt.swift`: packed type/count, unrolled 21x3 colors, persistent CTA.
+- `poc/local_batch.swift`: corrected per-color kernel and command-buffer batching.
+- `poc/local_beta.swift`: corrected persistent kernel with beta table and invariant checks.
+
+Measured M3, beta 3.2:
+
+| kernel | C | rate | per config |
+|---|---:|---:|---:|
+| packed persistent | 1 | 354M/s | 354M/s |
+| batch-barrier | 1000 | 1.028G/s | 1.028M/s |
+
+Exactness: C=1 batch modes PASS after every color; packed persistent mismatches=0; beta 3.2 C=1 exact; invariants PASS.
+
+Gaps:
+
+- Single chain target 16G/s: 45x above 354M/s.
+- 1000 configs target 1.286G/s/config: 1250x above 1.028M/s/config.
+- 16G/s aggregate target is 1286x above 1.028G/s.
+
+The M3 has eight GPU cores. A persistent CTA uses one; the color phase has 441 edges. Even ideal 8-core scaling from 354M/s is 2.83G/s, still 5.7x short of 16G/s. The M3 cannot reach the target.

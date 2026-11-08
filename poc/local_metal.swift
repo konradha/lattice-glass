@@ -1,3 +1,4 @@
+// DEPRECATED: this version leaves swapped-endpoint counts stale. Use poc/local_batch.swift.
 import Foundation
 import Metal
 
