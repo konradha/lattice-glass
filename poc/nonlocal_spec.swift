@@ -626,29 +626,44 @@ func metalSource(L: Int) -> String {
                 // Every lane reads round-start state; no lane sees another
                 // lane's commit in this block.
                 if (valid) {
-                    ta = typeOf(mys, a);
-                    tb = typeOf(mys, b);
+                    uchar ea = mys[a];
+                    uchar eb = mys[b];
+                    ta = uint(ea) & 3u;
+                    tb = uint(eb) & 3u;
                     noop = (ta == tb);
                     if (!noop) {
-                        ca = countOf(mys, a);
-                        cb = countOf(mys, b);
+                        ca = (uint(ea) >> 2) & 7u;
+                        cb = (uint(eb) >> 2) & 7u;
                         d = int(tb != 0u) - int(ta != 0u);
 
-                        dE += energyOf(tb, int(ca)) - energyOf(ta, int(ca));
-                        dE += energyOf(ta, int(cb)) - energyOf(tb, int(cb));
                         if (d != 0) {
+                            // Addresses first, then all 12 byte loads.
                             #pragma unroll
                             for (uint q = 0u; q < 6u; ++q) {
                                 na[q] = neighborC(a, ax, ay, az, q);
-                                uint tq = typeOf(mys, na[q]);
-                                int cq = int(countOf(mys, na[q]));
-                                dE += energyOf(tq, cq + d) - energyOf(tq, cq);
-
                                 nb[q] = neighborC(b, bx, by, bz, q);
-                                uint tr = typeOf(mys, nb[q]);
-                                int cr = int(countOf(mys, nb[q]));
+                            }
+                            uchar sa[6];
+                            uchar sb[6];
+                            #pragma unroll
+                            for (uint q = 0u; q < 6u; ++q) {
+                                sa[q] = mys[na[q]];
+                                sb[q] = mys[nb[q]];
+                            }
+                            dE += energyOf(tb, int(ca)) - energyOf(ta, int(ca));
+                            dE += energyOf(ta, int(cb)) - energyOf(tb, int(cb));
+                            #pragma unroll
+                            for (uint q = 0u; q < 6u; ++q) {
+                                uint tq = uint(sa[q]) & 3u;
+                                int cq = int((uint(sa[q]) >> 2) & 7u);
+                                dE += energyOf(tq, cq + d) - energyOf(tq, cq);
+                                uint tr = uint(sb[q]) & 3u;
+                                int cr = int((uint(sb[q]) >> 2) & 7u);
                                 dE += energyOf(tr, cr - d) - energyOf(tr, cr);
                             }
+                        } else {
+                            dE += energyOf(tb, int(ca)) - energyOf(ta, int(ca));
+                            dE += energyOf(ta, int(cb)) - energyOf(tb, int(cb));
                         }
 
                         acc = (dE <= 0) ||
@@ -709,15 +724,12 @@ func metalSource(L: Int) -> String {
                     }
                 }
 
-                uint accSum = simd_sum((acc && lane < j) ? 1u : 0u);
-                uint noopSum = simd_sum((noop && lane < j) ? 1u : 0u);
-                uint validSum = simd_sum((valid && lane < j) ? 1u : 0u);
-                if (lane == 0u) {
-                    myCommitted += j;
-                    myAccepted += accSum;
-                    myNoop += noopSum;
-                    myValid += validSum;
+                if (lane < j) {
+                    myAccepted += acc ? 1u : 0u;
+                    myNoop += noop ? 1u : 0u;
+                    myValid += valid ? 1u : 0u;
                 }
+                if (lane == 0u) myCommitted += j;
                 k += j;
                 rIdx += 1u;
                 simdgroup_barrier(mem_flags::mem_threadgroup);
@@ -732,6 +744,11 @@ func metalSource(L: Int) -> String {
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
+        if (chain < C) {
+            myAccepted = simd_sum(myAccepted);
+            myNoop = simd_sum(myNoop);
+            myValid = simd_sum(myValid);
+        }
         if (lane == 0u && chain < C) {
             threadgroup uchar *mys = &st[sg * N];
             uint e = 0u;
