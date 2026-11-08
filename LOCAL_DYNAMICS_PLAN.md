@@ -220,3 +220,19 @@ Gaps:
 - 16G/s aggregate target is 1286x above 1.028G/s.
 
 The M3 has eight GPU cores. A persistent CTA uses one; the color phase has 441 edges. Even ideal 8-core scaling from 354M/s is 2.83G/s, still 5.7x short of 16G/s. The M3 cannot reach the target.
+
+## Final Metal scaling (beta 3.2)
+
+- Single chain, packed persistent CTA: 354M/s.
+  - 1e9 sweeps (9.261e12 proposals): 7.3 h.
+  - Full 3-axis sweep convention (2.778e13 proposals): 21.8 h.
+- C=1000 batch-barrier: 1.028G/s aggregate, 1.028M/s per config.
+- C=5000 batch-barrier: 1.059G/s aggregate, 0.212M/s per config.
+- Scaling saturates near 1G/s on the M3 GPU.
+
+Gap:
+- 16G/s single: 45x.
+- 1.286G/s per config at C=1000: 1250x.
+- 1.286T/s aggregate: 1215x.
+
+The eight-core M3 cannot close these gaps. A persistent CTA uses one core; ideal 8-core scaling from 354M/s is 2.83G/s, still 5.7x short of 16G/s.
