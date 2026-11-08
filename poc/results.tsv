@@ -9,3 +9,4 @@ profile_after_pack	WORKING	conflict81% delta4.5% rest18%	N/A	ablation; claim map
 spec_kernel	UNCOMMITTED	256:0.445G 1024:0.538G b2.8; 256:0.423G 1024:0.538G b3.2	G1/G2 PASS	prefix25.47 acc0.3628 noop0.354; conflict52% delta29% rng19%
 spec_noconf	UNCOMMITTED	256:1.181G	N/A	ablation ceiling; target1.1 requires near-zero conflict
 roofline	UNCOMMITTED	TG u32 71.0G/s byte68.7G/s ALU129/636G/s atomic34.7G/s	N/A	M3 microbench
+noop_skip	WORKING	256:1.191G b2.8 1.289G b3.2; 1024:1.543G/1.545G	G1/G2 PASS	pred2.5x measured2.67x; no-op excluded ballot/delta; prefix31.995; noop0.354; acceptance0.0078

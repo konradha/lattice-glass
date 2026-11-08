@@ -586,29 +586,31 @@ func metalSource(L: Int) -> String {
                 if (valid) {
                     ta = typeOf(mys, a);
                     tb = typeOf(mys, b);
-                    ca = countOf(mys, a);
-                    cb = countOf(mys, b);
-                    d = int(tb != 0u) - int(ta != 0u);
-
-                    dE += energyOf(tb, int(ca)) - energyOf(ta, int(ca));
-                    dE += energyOf(ta, int(cb)) - energyOf(tb, int(cb));
-                    #pragma unroll
-                    for (uint q = 0u; q < 6u; ++q) {
-                        na[q] = neighbor(a, q);
-                        uint tq = typeOf(mys, na[q]);
-                        int cq = int(countOf(mys, na[q]));
-                        dE += energyOf(tq, cq + d) - energyOf(tq, cq);
-
-                        nb[q] = neighbor(b, q);
-                        uint tr = typeOf(mys, nb[q]);
-                        int cr = int(countOf(mys, nb[q]));
-                        dE += energyOf(tr, cr - d) - energyOf(tr, cr);
-                    }
-
-                    acc = (dE <= 0) ||
-                          ((dE + THRESH_OFFSET < THRESH_COUNT) &&
-                           (uBits < thresh[dE + THRESH_OFFSET]));
                     noop = (ta == tb);
+                    if (!noop) {
+                        ca = countOf(mys, a);
+                        cb = countOf(mys, b);
+                        d = int(tb != 0u) - int(ta != 0u);
+
+                        dE += energyOf(tb, int(ca)) - energyOf(ta, int(ca));
+                        dE += energyOf(ta, int(cb)) - energyOf(tb, int(cb));
+                        #pragma unroll
+                        for (uint q = 0u; q < 6u; ++q) {
+                            na[q] = neighbor(a, q);
+                            uint tq = typeOf(mys, na[q]);
+                            int cq = int(countOf(mys, na[q]));
+                            dE += energyOf(tq, cq + d) - energyOf(tq, cq);
+
+                            nb[q] = neighbor(b, q);
+                            uint tr = typeOf(mys, nb[q]);
+                            int cr = int(countOf(mys, nb[q]));
+                            dE += energyOf(tr, cr - d) - energyOf(tr, cr);
+                        }
+
+                        acc = (dE <= 0) ||
+                              ((dE + THRESH_OFFSET < THRESH_COUNT) &&
+                               (uBits < thresh[dE + THRESH_OFFSET]));
+                    }
                 }
 
                 shPA[slot] = packCoord(a);
@@ -673,7 +675,7 @@ func metalSource(L: Int) -> String {
                 }
 
                 uint accSum = simd_sum((acc && lane < j) ? 1u : 0u);
-                uint noopSum = simd_sum((acc && noop && lane < j) ? 1u : 0u);
+                uint noopSum = simd_sum((noop && lane < j) ? 1u : 0u);
                 uint validSum = simd_sum((valid && lane < j) ? 1u : 0u);
                 if (lane == 0u) {
                     myCommitted += j;
@@ -978,11 +980,13 @@ func simulateSpecChain(state: inout [UInt8], chain: Int, L: Int,
             let ta = typeAt(state, a[l])
             let tb = typeAt(state, b[l])
             noop[l] = (ta == tb)
-            let de = delta(state, a[l], b[l], L)
-            if de <= 0 {
-                acc[l] = true
-            } else if de + kThresholdOffset < kThresholdCount {
-                acc[l] = u[l] < thresholds[de + kThresholdOffset]
+            if !noop[l] {
+                let de = delta(state, a[l], b[l], L)
+                if de <= 0 {
+                    acc[l] = true
+                } else if de + kThresholdOffset < kThresholdCount {
+                    acc[l] = u[l] < thresholds[de + kThresholdOffset]
+                }
             }
         }
 
@@ -1007,7 +1011,9 @@ func simulateSpecChain(state: inout [UInt8], chain: Int, L: Int,
         for l in 0..<j where acc[l] {
             commit(&state, a[l], b[l], L)
             stats.accepted += 1
-            if noop[l] { stats.noop += 1 }
+        }
+        for l in 0..<j where noop[l] {
+            stats.noop += 1
         }
         for l in 0..<j where valid[l] {
             stats.validRetired += 1
