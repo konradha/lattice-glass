@@ -146,3 +146,29 @@ Measured:
 The M3 GPU is about 2,738x short of 1.286T aggregate and 2,738x short per config at C=1000. A single config is about 56 days for 1e9 sweeps.
 
 This is a real PoC, not a hardware target. It validates the Metal kernel, color schedule, state layout, and counter RNG. It does not validate H100 scaling.
+
+## CPU local baseline and PoC comparison
+
+CPU M3, L=21, local_pct=100, one thread, `cpu/lattice.hpp`:
+
+| beta | ns/proposal | M proposals/s |
+|---:|---:|---:|
+| 0.0 | 79.3 | 12.61 |
+| 0.5 | 77.9 | 12.83 |
+| 2.0 | 84.9 | 11.78 |
+| 2.8 | 78.6 | 12.72 |
+
+Metal PoC, same Mac:
+
+- C=1: 1.92M/s. CPU is 6.6x faster for one config.
+- C=1000: 469M/s aggregate, 0.469M/s/config.
+
+This PoC is not optimized:
+- one thread per edge;
+- 63 command-buffer dispatches per sweep;
+- no batching of colors in a single command buffer;
+- no multi-config CTA packing;
+- state in global buffers, not shared memory;
+- no beta sweep.
+
+It proves the colored kernel and CPU equality, not peak throughput.
