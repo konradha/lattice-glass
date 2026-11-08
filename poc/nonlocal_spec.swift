@@ -422,6 +422,7 @@ func metalSource(L: Int) -> String {
     #include <metal_stdlib>
     #include <metal_atomic>
     using namespace metal;
+    inline uint ballotMask(bool x) { return uint(simd_ballot(x).operator simd_vote::vote_t()); }
 
     #define L \(L)
     #define N (L * L * L)
@@ -662,19 +663,8 @@ func metalSource(L: Int) -> String {
                 // Accepted-mask build.  CUDA: lane 0 stores 0 to __shared__,
                 // atomicOr(&mask, 1u << lane) per accepted lane, __syncwarp()
                 // before and after.  Bit i names lane i of this chain.
-                if (lane == 0u) {
-                    atomic_store_explicit(&shMask[sg], 0u, memory_order_relaxed);
-                }
-                simdgroup_barrier(mem_flags::mem_threadgroup);  // __syncwarp()
-                if (acc) {
-                    atomic_fetch_or_explicit(&shMask[sg], (1u << lane),
-                                            memory_order_relaxed);
-                }
-                simdgroup_barrier(mem_flags::mem_threadgroup);  // __syncwarp()
-
-                // Conflict scan over set bits strictly below this lane only.
-                uint mask = atomic_load_explicit(&shMask[sg],
-                                                 memory_order_relaxed);
+                uint mask = ballotMask(acc);
+                simdgroup_barrier(mem_flags::mem_threadgroup);
                 uint bits = mask & ((1u << lane) - 1u);
                 uint pa = shPA[slot];
                 uint pb = shPB[slot];
