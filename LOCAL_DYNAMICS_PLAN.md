@@ -111,3 +111,12 @@ Estimated campaign: 8 H100-class GPUs, about 2 h, 1000 configs at a time. 3000 c
 - CUDA shared-memory/CTA model.
 - Xilinx UG573/UG901 for BRAM port limits.
 - Metropolis/Hastings; parallel MCMC and prefetching literature.
+
+
+## Gate 1 results (2026-11-08)
+
+- `golden/local_model.hpp`: exact L=21 local state, 12-site affected set, delta, commit, Metropolis step.
+- `golden/local_tests.cpp`: PASS. 55,566 directed bonds; delta vs full energy; fixed composition; 441-move class; 100,000 random proposals.
+- `golden/color_validate.cpp`: PASS. 27,783 bonds; 63 classes; 6,112,260 same-class pairs; zero conflicts.
+
+The 21-color schedule is valid per axis. Axis sweeps must be serialized; cross-axis same-color conflicts exist. It remains a different scan from the original random-site/random-direction kernel.
