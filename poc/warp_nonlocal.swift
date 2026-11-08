@@ -1160,9 +1160,9 @@ func benchmark(_ runner: MetalRunner) {
     let N = L * L * L
     let rounds = 8192
     let th = makeThresholds(beta: 2.8)
-    let initial = makeInitialState(L: L, chains: 256, seed: 1)
+    let initial = makeInitialState(L: L, chains: 1024, seed: 1)
 
-    for chains in [1, 8, 64, 256] {
+    for chains in [1, 8, 64, 256, 1024] {
         let state = Array(initial[0..<(chains * N)])
         // Warm the pipeline / allocator; the measured run starts from the
         // same input state, so its proposal stream is deterministic.
