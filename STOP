@@ -1,0 +1,8 @@
+STOP: M3 target reached.
+variant: no-op-excluded speculative prefix kernel
+commit: 735dc26
+256 chains: 1.1906 G/s beta2.8; 1.2892 G/s beta3.2
+1024 chains: 1.5429 G/s beta2.8; 1.5453 G/s beta3.2
+gates: G1 byte-exact L8/L21; G2 3sigma beta2.8/3.0 PASS
+mean prefix 31.995/32; no-op fraction 0.3539; acceptance 0.00784
+predicted 2.5x, measured 2.67x vs prior speculative kernel
