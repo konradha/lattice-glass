@@ -158,6 +158,15 @@ func neighbor(_ s: Int, _ d: Int, _ L: Int) -> Int {
 }
 
 @inline(__always)
+func torusL1(_ ax: UInt32, _ ay: UInt32, _ az: UInt32,
+             _ bx: UInt32, _ by: UInt32, _ bz: UInt32, _ L: Int) -> Int {
+    var dx = abs(Int(ax) - Int(bx))
+    var dy = abs(Int(ay) - Int(by))
+    var dz = abs(Int(az) - Int(bz))
+    dx = min(dx, L - dx); dy = min(dy, L - dy); dz = min(dz, L - dz)
+    return dx + dy + dz
+}
+
 func torusL1(_ a: UInt32, _ b: UInt32, _ L: Int) -> Int {
     let lu = UInt32(L)
     let ax = Int(a % lu)
@@ -194,7 +203,7 @@ func philox4x32_10(_ k0: UInt32, _ k1: UInt32,
     var c3: UInt32 = 0
     var k0 = k0
     var k1 = k1
-    for _ in 0..<10 {
+    for _ in 0..<7 {
         let hi0 = mulHi(0xD2511F53, c0)
         let lo0 = 0xD2511F53 &* c0
         let hi1 = mulHi(0xCD9E8D57, c2)
@@ -216,9 +225,13 @@ func specProposal(chain: Int, index: UInt32, L: Int, N: Int)
     -> (a: UInt32, b: UInt32, u: UInt32, valid: Bool)
 {
     let w = philox4x32_10(UInt32(truncatingIfNeeded: chain), index, 0, 0)
-    let a = w.0 % UInt32(N)
-    let b = w.1 % UInt32(N)
-    let valid = a != b && torusL1(a, b, L) >= 3
+    func c10(_ r: UInt32) -> UInt32 { (r * UInt32(L)) >> 10 }
+    let ax = c10(w.0 & 1023), ay = c10((w.0 >> 10) & 1023), az = c10((w.0 >> 20) & 1023)
+    let bx = c10(w.1 & 1023), by = c10((w.1 >> 10) & 1023), bz = c10((w.1 >> 20) & 1023)
+    let a = ax + UInt32(L) * ay + UInt32(L * L) * az
+    let b = bx + UInt32(L) * by + UInt32(L * L) * bz
+    let valid = a != b &&
+        torusL1(ax, ay, az, bx, by, bz, L) >= 3
     return (a: a, b: b, u: w.2, valid: valid)
 }
 
@@ -429,7 +442,7 @@ func metalSource(L: Int) -> String {
         uint c3 = 0u;
         uint k0 = key.x;
         uint k1 = key.y;
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 7; ++i) {
             uint hi0 = philoxMulHi(0xD2511F53u, c0);
             uint lo0 = 0xD2511F53u * c0;
             uint hi1 = philoxMulHi(0xCD9E8D57u, c2);
@@ -470,6 +483,31 @@ func metalSource(L: Int) -> String {
         dy = min(dy, L - dy);
         dz = min(dz, L - dz);
         return dx + dy + dz;
+    }
+
+    // Uniform coordinate from a 10-bit field: no divide/modulo.
+    inline uint c10(uint r) { return (r * uint(L)) >> 10; }
+    inline void drawCoords(uint r, thread uint &x, thread uint &y, thread uint &z) {
+        x = c10(r & 1023u);
+        y = c10((r >> 10) & 1023u);
+        z = c10((r >> 20) & 1023u);
+    }
+    inline int torusL1c(uint ax, uint ay, uint az, uint bx, uint by, uint bz) {
+        int dx = abs(int(ax) - int(bx));
+        int dy = abs(int(ay) - int(by));
+        int dz = abs(int(az) - int(bz));
+        dx = min(dx, L - dx);
+        dy = min(dy, L - dy);
+        dz = min(dz, L - dz);
+        return dx + dy + dz;
+    }
+    inline uint neighborC(uint s, uint x, uint y, uint z, uint d) {
+        if (d == 0u) return (x == uint(L - 1)) ? s - uint(L - 1) : s + 1u;
+        if (d == 1u) return (x == 0u) ? s + uint(L - 1) : s - 1u;
+        if (d == 2u) return (y == uint(L - 1)) ? s - uint(L * (L - 1)) : s + uint(L);
+        if (d == 3u) return (y == 0u) ? s + uint(L * (L - 1)) : s - uint(L);
+        if (d == 4u) return (z == uint(L - 1)) ? s - uint(L * L * (L - 1)) : s + uint(L * L);
+        return (z == 0u) ? s + uint(L * L * (L - 1)) : s - uint(L * L);
     }
 
     // L <= 32 assumed: three 5-bit coordinate fields plus 5-bit z field.
@@ -572,13 +610,16 @@ func metalSource(L: Int) -> String {
                 uint na[6];
                 uint nb[6];
 
+                uint ax = 0u, ay = 0u, az = 0u, bx = 0u, by = 0u, bz = 0u;
                 if (active) {
                     uint4 w = philox4x32_10(uint2(chain, idx), uint2(0u, 0u));
-                    a = w.x % N;
-                    b = w.y % N;
+                    drawCoords(w.x, ax, ay, az);
+                    drawCoords(w.y, bx, by, bz);
+                    a = ax + uint(L) * ay + uint(L * L) * az;
+                    b = bx + uint(L) * by + uint(L * L) * bz;
                     uBits = w.z;
                     // Invalid pair: structural rejection, consumes its index.
-                    valid = (a != b) && (torusL1(a, b) >= 3);
+                    valid = (a != b) && (torusL1c(ax, ay, az, bx, by, bz) >= 3);
                 }
 
                 // Every lane reads round-start state; no lane sees another
@@ -594,17 +635,19 @@ func metalSource(L: Int) -> String {
 
                         dE += energyOf(tb, int(ca)) - energyOf(ta, int(ca));
                         dE += energyOf(ta, int(cb)) - energyOf(tb, int(cb));
-                        #pragma unroll
-                        for (uint q = 0u; q < 6u; ++q) {
-                            na[q] = neighbor(a, q);
-                            uint tq = typeOf(mys, na[q]);
-                            int cq = int(countOf(mys, na[q]));
-                            dE += energyOf(tq, cq + d) - energyOf(tq, cq);
+                        if (d != 0) {
+                            #pragma unroll
+                            for (uint q = 0u; q < 6u; ++q) {
+                                na[q] = neighborC(a, ax, ay, az, q);
+                                uint tq = typeOf(mys, na[q]);
+                                int cq = int(countOf(mys, na[q]));
+                                dE += energyOf(tq, cq + d) - energyOf(tq, cq);
 
-                            nb[q] = neighbor(b, q);
-                            uint tr = typeOf(mys, nb[q]);
-                            int cr = int(countOf(mys, nb[q]));
-                            dE += energyOf(tr, cr - d) - energyOf(tr, cr);
+                                nb[q] = neighborC(b, bx, by, bz, q);
+                                uint tr = typeOf(mys, nb[q]);
+                                int cr = int(countOf(mys, nb[q]));
+                                dE += energyOf(tr, cr - d) - energyOf(tr, cr);
+                            }
                         }
 
                         acc = (dE <= 0) ||
@@ -613,8 +656,8 @@ func metalSource(L: Int) -> String {
                     }
                 }
 
-                shPA[slot] = packCoord(a);
-                shPB[slot] = packCoord(b);
+                shPA[slot] = ax | (ay << 5) | (az << 10);
+                shPB[slot] = bx | (by << 5) | (bz << 10);
 
                 // Accepted-mask build.  CUDA: lane 0 stores 0 to __shared__,
                 // atomicOr(&mask, 1u << lane) per accepted lane, __syncwarp()
@@ -663,14 +706,16 @@ func metalSource(L: Int) -> String {
                 if (acc && lane < j) {
                     setSite(mys, a, tb, ca);
                     setSite(mys, b, ta, cb);
-                    #pragma unroll
-                    for (uint q = 0u; q < 6u; ++q) {
-                        uint qa = na[q];
-                        setSite(mys, qa, typeOf(mys, qa),
-                                uint(int(countOf(mys, qa)) + d));
-                        uint qb = nb[q];
-                        setSite(mys, qb, typeOf(mys, qb),
-                                uint(int(countOf(mys, qb)) - d));
+                    if (d != 0) {
+                        #pragma unroll
+                        for (uint q = 0u; q < 6u; ++q) {
+                            uint qa = na[q];
+                            setSite(mys, qa, typeOf(mys, qa),
+                                    uint(int(countOf(mys, qa)) + d));
+                            uint qb = nb[q];
+                            setSite(mys, qb, typeOf(mys, qb),
+                                    uint(int(countOf(mys, qb)) - d));
+                        }
                     }
                 }
 
