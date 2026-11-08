@@ -172,3 +172,26 @@ This PoC is not optimized:
 - no beta sweep.
 
 It proves the colored kernel and CPU equality, not peak throughput.
+
+## Persistent Metal single-chain kernel
+
+`poc/local_chain.swift`:
+- one CTA, 512 threads, state in threadgroup memory;
+- all 21 colors x 3 axes looped inside one kernel;
+- threadgroup barrier per color;
+- no per-color command buffer.
+
+Validation: `persistent validate mismatches=0` after 2 full sweeps against the CPU colored reference.
+
+Measured (M3, beta 2.8):
+
+| full sweeps | proposals | time | rate |
+|---:|---:|---:|---:|
+| 1 | 27,783 | 0.0027 s | 10.5M/s |
+| 10 | 277,830 | 0.0051 s | 54.6M/s |
+| 100 | 2,778,300 | 0.0228 s | 122M/s |
+| 1000 | 27,783,000 | 0.1688 s | 164.6M/s |
+
+CPU local single core: 12.6M/s. Persistent Metal is 13x faster for one config.
+
+Target 16G/s is 97x above this kernel. One CTA uses one of eight M3 GPU cores. The 441-edge color phase gives insufficient parallelism, and the in-phase work is memory/arithmetic heavy. Single-chain 16G/s is not reachable on this M3.
