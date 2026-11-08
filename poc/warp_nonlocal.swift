@@ -459,6 +459,16 @@ func metalSource(L: Int) -> String {
         dz = min(dz, L - dz);
         return dx + dy + dz;
     }
+    inline uint packCoord(uint s) {
+        return (s % L) | (((s / L) % L) << 5) | ((s / (L * L)) << 10);
+    }
+    inline int torusL1p(uint a, uint b) {
+        int dx = abs(int(a & 31u) - int(b & 31u));
+        int dy = abs(int((a >> 5) & 31u) - int((b >> 5) & 31u));
+        int dz = abs(int((a >> 10) & 31u) - int((b >> 10) & 31u));
+        dx = min(dx, L - dx); dy = min(dy, L - dy); dz = min(dz, L - dz);
+        return dx + dy + dz;
+    }
 
     inline int energyOf(uint t, int c) {
         if (t == 0u) return 0;
@@ -542,14 +552,16 @@ func metalSource(L: Int) -> String {
                 // endpoint pairs.  At iteration i, lane i's kept bit is final,
                 // so a uniform broadcast reproduces the serial greedy scan.
                 // (31 x 4 cross-endpoint conflict detection.)
+                uint ca = packCoord(a);
+                uint cb = packCoord(b);
                 bool kept = true;
                 for (uint i = 0u; i < 32u; ++i) {
-                    uint ai = simd_shuffle(a, ushort(i));
-                    uint bi = simd_shuffle(b, ushort(i));
+                    uint cai = simd_shuffle(ca, ushort(i));
+                    uint cbi = simd_shuffle(cb, ushort(i));
                     uint ki = simd_shuffle(kept ? 1u : 0u, ushort(i));
                     if (i < lane && ki != 0u) {
-                        if (torusL1(a, ai) <= 2 || torusL1(a, bi) <= 2 ||
-                            torusL1(b, ai) <= 2 || torusL1(b, bi) <= 2) {
+                        if (torusL1p(ca, cai) <= 2 || torusL1p(ca, cbi) <= 2 ||
+                            torusL1p(cb, cai) <= 2 || torusL1p(cb, cbi) <= 2) {
                             kept = false;
                         }
                     }
