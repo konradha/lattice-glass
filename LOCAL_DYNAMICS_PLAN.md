@@ -120,3 +120,29 @@ Estimated campaign: 8 H100-class GPUs, about 2 h, 1000 configs at a time. 3000 c
 - `golden/color_validate.cpp`: PASS. 27,783 bonds; 63 classes; 6,112,260 same-class pairs; zero conflicts.
 
 The 21-color schedule is valid per axis. Axis sweeps must be serialized; cross-axis same-color conflicts exist. It remains a different scan from the original random-site/random-direction kernel.
+
+## Mac Metal PoC (2026-11-08)
+
+Environment: Apple M3, 8 GPU cores, 16 GB, Metal 4, fp32 acceptance. PyTorch/MLX absent; raw Metal compute.
+
+Implementation: `poc/local_metal.swift`.
+- One thread per edge per config.
+- 21 colors x 441 edges per axis.
+- 3 axes x 3 sweeps benchmarked.
+- types/counts uint8; fp32 exp; counter hash uniform.
+- CPU colored reference matches after every color.
+
+Validation: `validate C=1 mismatches=0` over 2 sweeps x 3 axes x 21 colors.
+
+Measured:
+
+| configs | time (s) | aggregate proposals/s | per-config proposals/s |
+|---:|---:|---:|---:|
+| 1 | 0.0434 | 1.92M | 1.92M |
+| 10 | 0.0423 | 19.7M | 1.97M |
+| 100 | 0.0686 | 121M | 1.21M |
+| 1000 | 0.1779 | 469M | 0.469M |
+
+The M3 GPU is about 2,738x short of 1.286T aggregate and 2,738x short per config at C=1000. A single config is about 56 days for 1e9 sweeps.
+
+This is a real PoC, not a hardware target. It validates the Metal kernel, color schedule, state layout, and counter RNG. It does not validate H100 scaling.
