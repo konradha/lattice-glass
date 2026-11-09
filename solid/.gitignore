@@ -1,2 +1,4 @@
 driver
 *.npz
+__pycache__/
+*.pyc

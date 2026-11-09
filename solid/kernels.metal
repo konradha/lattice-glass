@@ -77,6 +77,7 @@ kernel void run_segment(device uchar* state [[buffer(0)]],
                         constant uint& count [[buffer(8)]],
                         constant ulong& seed [[buffer(9)]],
                         constant uint* th [[buffer(10)]],
+                        constant uint& mode [[buffer(11)]],
                         uint gid [[thread_position_in_grid]]) {
     if (gid >= chains) return;
     device uchar* st = state + (ulong)gid * N;
@@ -85,7 +86,7 @@ kernel void run_segment(device uchar* state [[buffer(0)]],
     for (uint k=0;k<count;k++) {
         uint sw=start+k; int al=0, an=0;
         uint64_t idx0=(uint64_t(2u)*sw+0u)*uint64_t(N);
-        for (uint t=0;t<N;t++) {
+        for (uint t=0;t<N && mode!=2u;t++) {
             uint64_t r0=mix64(seed ^ (uint64_t(gid)*0x9e3779b97f4a7c15UL) ^
                               ((idx0+uint64_t(t))*0xd1342543de82ef95UL) ^ 0x5678UL);
             uint64_t r1=mix64(r0 ^ 0xa0761d6478bd642fUL);
@@ -94,7 +95,7 @@ kernel void run_segment(device uchar* state [[buffer(0)]],
             if (a!=b && torusL1(a,b,L)>=3 && tryProposal(st,L,N,int(a),int(b),uint(r2>>32),th,energy)) an++;
         }
         uint64_t idx1=(uint64_t(2u)*sw+1u)*uint64_t(N);
-        for (uint t=0;t<N;t++) {
+        for (uint t=0;t<N && mode!=1u;t++) {
             uint64_t r0=mix64(seed ^ (uint64_t(gid)*0x9e3779b97f4a7c15UL) ^
                               ((idx1+uint64_t(t))*0xd1342543de82ef95UL) ^ 0x1234UL);
             uint64_t r1=mix64(r0 ^ 0xa0761d6478bd642fUL);
