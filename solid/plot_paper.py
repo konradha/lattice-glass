@@ -41,6 +41,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 Float = np.float64
+_TRAPZ = getattr(np, "trapezoid", getattr(np, "trapz", None))
 
 
 def load_runs(path: Path) -> list[dict]:
@@ -156,7 +157,7 @@ def spectrum(t: np.ndarray, q: np.ndarray, omega: np.ndarray) -> np.ndarray:
     out = np.empty_like(omega)
     for i, w in enumerate(omega):
         kern = (w * td) / (1.0 + (w * td) ** 2)
-        out[i] = -np.trapezoid(dq * kern, lx)
+        out[i] = -_TRAPZ(dq * kern, lx)
     return out
 
 
