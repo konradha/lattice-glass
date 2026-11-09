@@ -25,8 +25,9 @@ inline int torusL1(uint a, uint b, uint L) {
     dx = min(dx, int(L) - dx); dy = min(dy, int(L) - dy); dz = min(dz, int(L) - dz);
     return dx + dy + dz;
 }
-inline int le(uint t, int c) {
+inline int le(uint t, int cMask) {
     if (t == 0u) return 0;
+    int c = int(popcount(uint(cMask) & 63u));
     int d = c - (t == 1u ? 3 : 5);
     return d*d;
 }

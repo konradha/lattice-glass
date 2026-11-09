@@ -38,9 +38,11 @@ struct Lattice {
     return site(x, y, z);
   }
   int type(int s) const { return st[s] & 3; }
-  int count(int s) const { return (st[s] >> 2) & 7; }
-  int localEnergy(int t, int c) const {
+  int count(int s) const { return __builtin_popcount(unsigned(st[s] >> 2)); }
+  // cMask is the six-neighbour occupancy bit mask.
+  int localEnergy(int t, int cMask) const {
     if (t == 0) return 0;
+    int c = __builtin_popcount(unsigned(cMask) & 63u);
     int d = c - (t == 1 ? 3 : 5);
     return d * d;
   }
@@ -73,9 +75,9 @@ struct Lattice {
     for (int i = 0; i < n1; ++i) st[p[i]] = 1;
     for (int i = 0; i < n2; ++i) st[p[n1 + i]] = 2;
     for (int s = 0; s < N; ++s) {
-      int c = 0;
-      for (int d = 0; d < 6; ++d) if ((st[nb(s, d)] & 3) != 0) ++c;
-      st[s] = uint8_t((st[s] & 3) | (c << 2));
+      int mask = 0;
+      for (int d = 0; d < 6; ++d) if ((st[nb(s, d)] & 3) != 0) mask |= (1 << d);
+      st[s] = uint8_t((st[s] & 3) | (mask << 2));
     }
   }
 };

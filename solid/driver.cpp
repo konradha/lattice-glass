@@ -144,7 +144,7 @@ static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
         int al = (mode != 1) ? localSweep(lat, seed, c, sw, th, e) : 0;
         uint64_t idx = uint64_t(c) * total + (sw - histStart);
         e = lat.energy();
-        hist.energy[idx] = float(e) / float(nocc);
+        hist.energy[idx] = float(e);
         hist.accNonlocal[idx] = float(an) / float(lat.N);
         hist.accLocal[idx] = float(al) / float(lat.N);
       }
@@ -180,7 +180,7 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
   uint32_t* np = (uint32_t*)an->contents();
   for (int ch = 0; ch < chains; ++ch) for (uint64_t j = 0; j < count; ++j) {
     uint64_t idx = uint64_t(ch) * total + (start - histStart) + j;
-    hist.energy[idx] = float(ep[ch * count + j]) / float(nocc);
+    hist.energy[idx] = float(ep[ch * count + j]);
     hist.accLocal[idx] = float(ap[ch * count + j]) / float(N);
     hist.accNonlocal[idx] = float(np[ch * count + j]) / float(N);
   }
@@ -188,8 +188,8 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
 }
 
 int main(int argc, char** argv) {
-  if (argc < 9 || argc > 11) {
-    fprintf(stderr, "usage: %s L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU [both|nonlocal|local] [EQUIL_SWEEPS]\n", argv[0]);
+  if (argc < 9 || argc > 12) {
+    fprintf(stderr, "usage: %s L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU [both|nonlocal|local] [EQUIL_SWEEPS] [STATE_RAW]\n", argv[0]);
     return 2;
   }
   int L = atoi(argv[1]);
@@ -201,6 +201,7 @@ int main(int argc, char** argv) {
   std::string modeStr = (argc >= 10) ? std::string(argv[9]) : "both";
   int mode = modeStr == "nonlocal" ? 1 : (modeStr == "local" ? 2 : 0);
   uint64_t equil = (argc >= 11) ? strtoull(argv[10], nullptr, 10) : 0;
+  std::string statePath = (argc >= 12) ? std::string(argv[11]) : "";
   if (L < 4 || cores < 1) { fprintf(stderr, "bad L/cores\n"); return 2; }
   if (fabs((rho1 + rho2) - rho) > 1e-8)
     fprintf(stderr, "WARNING: rho1+rho2=%.12g != rho=%.12g; using rho1/rho2 for composition\n", rho1 + rho2, rho);
@@ -218,6 +219,15 @@ int main(int argc, char** argv) {
   const uint64_t seed = 1;
   std::vector<Lattice> lats(cores, Lattice(L));
   for (int c = 0; c < cores; ++c) lats[c].init(seed + uint64_t(c) * 0x9e3779b97f4a7c15ULL, n1, n2);
+  if (!statePath.empty()) {
+    std::ifstream sf(statePath, std::ios::binary);
+    if (!sf) { fprintf(stderr, "cannot open seed state %s\n", statePath.c_str()); return 2; }
+    std::vector<uint8_t> raw((size_t)cores * N);
+    sf.read((char*)raw.data(), raw.size());
+    if (!sf) { fprintf(stderr, "short seed state %s\n", statePath.c_str()); return 2; }
+    for (int c = 0; c < cores; ++c)
+      std::copy(raw.begin() + size_t(c)*N, raw.begin() + size_t(c+1)*N, lats[c].st.begin());
+  }
   std::vector<uint8_t> initial(size_t(cores) * N);
   for (int c = 0; c < cores; ++c)
     std::copy(lats[c].st.begin(), lats[c].st.end(), initial.begin() + size_t(c) * N);
@@ -264,7 +274,7 @@ int main(int argc, char** argv) {
         uint8_t* p = (uint8_t*)gstate->contents();
         for (int c = 0; c < cores; ++c) {
           std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
-          target.energy[size_t(c) * total + (start - histStart + k)] = float(lats[c].energy()) / float(nocc);
+          target.energy[size_t(c) * total + (start - histStart + k)] = float(lats[c].energy());
         }
       }
     } else {

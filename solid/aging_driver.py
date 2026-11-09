@@ -135,12 +135,18 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _as_int(v, name):
-    if isinstance(v, str):
-        if v.lower() == "auto":
-            return None
-        return int(v)
-    return int(v)
+def _as_values(v, name, n):
+    if isinstance(v, (int, float)):
+        return [int(v)] * n
+    text = str(v).strip()
+    if text.lower() == "auto":
+        return [None] * n
+    vals = [int(x) for x in text.replace(",", " ").split()]
+    if len(vals) == 1:
+        return vals * n
+    if len(vals) != n:
+        raise ValueError(f"{name} needs 1 or {n} values, got {len(vals)}")
+    return vals
 
 
 def choose_tau(beta: float, L: int, mode: str,
@@ -159,10 +165,12 @@ def choose_tau(beta: float, L: int, mode: str,
 
 def plan_runs(args) -> list[dict]:
     plan = []
-    for beta in args.betas:
-        tau = choose_tau(beta, args.L, args.mode, args.tau_local, args.tau_nonlocal)
-        eq = _as_int(args.equilibration, "equilibration")
-        sw = _as_int(args.sweeps, "sweeps")
+    eqs = _as_values(args.equilibration, "equilibration", len(args.betas))
+    sws = _as_values(args.sweeps, "sweeps", len(args.betas))
+    for beta, eq, sw in zip(args.betas, eqs, sws):
+        tau = float("nan")
+        if eq is None or sw is None:
+            tau = choose_tau(beta, args.L, args.mode, args.tau_local, args.tau_nonlocal)
         if eq is None:
             eq = max(1, int(math.ceil(args.eq_factor * tau)))
         if sw is None:
@@ -222,10 +230,11 @@ def aggregate(results: Sequence[dict], args) -> None:
     with csv.open("w") as f:
         f.write("beta,equilibration_sweeps,production_sweeps,tau,estimated_seconds,wall_seconds,status\n")
         for r in results:
-            f.write(f"{r['beta']:.17g},{r['equilibration']},{r['sweeps']},"
-                    f"{r['tau']:.17g},"
-                    f"{'' if r['estimated_seconds'] is None else r['estimated_seconds']:.6f},"
-                    f"{r['wall']:.6f},{r['status']}\n")
+            tau = float(r["tau"])
+            est = "" if r["estimated_seconds"] is None else format(float(r["estimated_seconds"]), ".6f")
+            f.write(f"{float(r['beta']):.17g},{int(r['equilibration'])},{int(r['sweeps'])},"
+                    f"{tau:.17g},{est},"
+                    f"{float(r['wall']):.6f},{r['status']}\n")
     manifest = {
         "args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
         "results": [{k: (str(v) if isinstance(v, Path) else v) for k, v in r.items()}
@@ -238,6 +247,7 @@ def aggregate(results: Sequence[dict], args) -> None:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    args.driver = args.driver.resolve()
     if not (0.0 <= args.rho <= 1.0 and 0.0 <= args.rho1 <= 1.0 and 0.0 <= args.rho2 <= 1.0):
         raise SystemExit("rho, rho1, rho2 must be in [0,1]")
     if abs(args.rho1 + args.rho2 - args.rho) > 1e-8:
