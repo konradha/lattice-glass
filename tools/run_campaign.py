@@ -60,7 +60,7 @@ def main():
     ap.add_argument("--sample-every", type=int, default=10)
     ap.add_argument("--checkpoint-every", type=int, default=1000)
     ap.add_argument("--history-every", type=int, default=100)
-    ap.add_argument("--local", type=int, default=50)
+    ap.add_argument("--local", type=int, default=0)
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
 
