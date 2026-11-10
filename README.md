@@ -1,13 +1,37 @@
-### Lattice glass in 3d
-This is a WIP repository to reproduce [this work](https://arxiv.org/abs/2003.02872).
+# lattice-glass — clean-solid
 
-More information to follow.
+EFMA lattice-glass sampler with a CPU reference and a Metal backend.
 
-run as
+## Build
+
 ```bash
-make
-export beta=10.
-export out_file=output.npy
-export OMP_NUM_THREADS=4
-./to_omp ${beta} ${out_file}
+make -C solid clean all
 ```
+
+Requires macOS Metal, `clang++`, and Boost headers.
+
+## Verify
+
+```bash
+make -C solid test
+make -C solid test-long
+```
+
+See `solid/VALIDATION.md` for the high-beta gate, campaign validation, and
+performance checks.
+
+## Run
+
+```bash
+solid/driver 21 2.0 0.75 0.30 0.45 1000 8 GPU nonlocal 100
+solid/driver 21 2.0 0.75 0.30 0.45 1000 8 GPU local 100
+```
+
+Arguments: `L beta rho rho1 rho2 sweeps chains CPU|GPU mode equil [state.raw]`.
+
+## Layout
+
+- `solid/` — driver, EFMA core, Metal kernel, correctness and plot tools
+- `plots_linspace/` — campaign figures
+- `tools/` — campaign helpers
+- `third_party/` — metal-cpp
