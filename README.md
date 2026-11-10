@@ -6,8 +6,7 @@ lattice-glass sampler with a CPU reference. WIP: Metal + CUDA backends for max d
 make -C solid clean all
 ```
 
-Metal is optional. On macOS it is enabled when the framework is present.
-Otherwise `make` prints a warning and builds the CPU backend:
+GPU backends are optional
 
 ```bash
 make -C solid HAVE_METAL=0
