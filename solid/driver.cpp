@@ -116,7 +116,7 @@ struct GPU {
     NS::String* ns = NS::String::string(src.c_str(), NS::UTF8StringEncoding);
     MTL::Library* lib = dev->newLibrary(ns, nullptr, &err);
     if (!lib) { fprintf(stderr, "MSL compile: %s\n", err ? err->localizedDescription()->utf8String() : "?"); exit(1); }
-    NS::String* fn = NS::String::string("run_segment", NS::UTF8StringEncoding);
+    NS::String* fn = NS::String::string("run_segment_warp", NS::UTF8StringEncoding);
     MTL::Function* f = lib->newFunction(fn);
     pso = dev->newComputePipelineState(f, &err);
     if (!pso) { fprintf(stderr, "pipeline: %s\n", err ? err->localizedDescription()->utf8String() : "?"); exit(1); }
@@ -127,7 +127,7 @@ struct Hist { std::vector<float> energy, accLocal, accNonlocal; };
 
 static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
                        uint64_t start, uint64_t count, uint64_t histStart,
-                       const std::vector<uint32_t>& th,
+                       const std::vector<Threshold>& th,
                        Hist& hist, uint64_t total, int nocc, int mode) {
   std::atomic<int> next{0};
   int nthreads = std::min<int>(chains, 64);
@@ -154,6 +154,7 @@ static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
 }
 
 static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
+                       MTL::Buffer* pcbuf, MTL::Buffer* nnbuf,
                        int chains, uint64_t seed, uint64_t start, uint64_t count,
                        uint64_t histStart,
                        Hist& hist, uint64_t total, int L, int N, int nocc, int mode) {
@@ -172,7 +173,11 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
   en->setBytes(&s, 4, 7); en->setBytes(&k, 4, 8); en->setBytes(&sd, 8, 9);
   en->setBuffer(thbuf, 0, 10);
   uint32_t md = uint32_t(mode); en->setBytes(&md, 4, 11);
-  en->dispatchThreadgroups(MTL::Size::Make(chains, 1, 1), MTL::Size::Make(1, 1, 1));
+  en->setBuffer(pcbuf, 0, 12); en->setBuffer(nnbuf, 0, 13);
+  uint32_t lemN = (0u - uint32_t(N)) % uint32_t(N);
+  uint32_t lem6 = (0u - 6u) % 6u;
+  en->setBytes(&lemN, 4, 14); en->setBytes(&lem6, 4, 15);
+  en->dispatchThreadgroups(MTL::Size::Make(chains, 1, 1), MTL::Size::Make(32, 1, 1));
   en->endEncoding(); cb->commit(); cb->waitUntilCompleted();
   if (cb->error()) { fprintf(stderr, "GPU error\n"); exit(1); }
   uint32_t* ep = (uint32_t*)eh->contents();
@@ -193,6 +198,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   int L = atoi(argv[1]);
+  const std::string betaText = argv[2];
   double beta = atof(argv[2]);
   double rho = atof(argv[3]), rho1 = atof(argv[4]), rho2 = atof(argv[5]);
   uint64_t sweeps = strtoull(argv[6], nullptr, 10);
@@ -233,7 +239,7 @@ int main(int argc, char** argv) {
     std::copy(lats[c].st.begin(), lats[c].st.end(), initial.begin() + size_t(c) * N);
   std::vector<uint8_t> equilibrated;
 
-  std::vector<uint32_t> th = makeThresholds(beta);
+  std::vector<Threshold> th = makeThresholds(betaText);
   Hist hist; hist.energy.assign(size_t(cores) * sweeps, 0.0f);
   hist.accLocal.assign(size_t(cores) * sweeps, 0.0f);
   hist.accNonlocal.assign(size_t(cores) * sweeps, 0.0f);
@@ -256,6 +262,8 @@ int main(int argc, char** argv) {
   GPU* gpu = nullptr;
   MTL::Buffer* gstate = nullptr;
   MTL::Buffer* gth = nullptr;
+  MTL::Buffer* gpc = nullptr;
+  MTL::Buffer* gnn = nullptr;
   if (useGPU) {
 #if defined(SOLID_MSL_PATH)
     gpu = new GPU(SOLID_MSL_PATH);
@@ -263,20 +271,30 @@ int main(int argc, char** argv) {
     gpu = new GPU("solid/kernels.metal");
 #endif
     gstate = gpu->dev->newBuffer(initial.data(), initial.size(), MTL::ResourceStorageModeShared);
-    gth = gpu->dev->newBuffer(th.data(), th.size() * 4, MTL::ResourceStorageModeShared);
+    gth = gpu->dev->newBuffer(th.data(), th.size() * sizeof(Threshold), MTL::ResourceStorageModeShared);
+    std::vector<uint32_t> pcv(static_cast<size_t>(N));
+    std::vector<uint16_t> nnv(static_cast<size_t>(N) * 6);
+    auto ix = [&](int x, int y, int z) { return x + L * y + L * L * z; };
+    const int dirs[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    for (int z = 0; z < L; ++z) for (int y = 0; y < L; ++y) for (int x = 0; x < L; ++x) {
+      int i = ix(x, y, z);
+      pcv[size_t(i)] = uint32_t(x | (y << 5) | (z << 10));
+      for (int j = 0; j < 6; ++j)
+        nnv[size_t(i) * 6 + j] = uint16_t(ix((x + dirs[j][0] + L) % L,
+                                             (y + dirs[j][1] + L) % L,
+                                             (z + dirs[j][2] + L) % L));
+    }
+    gpc = gpu->dev->newBuffer(pcv.data(), pcv.size() * 4, MTL::ResourceStorageModeShared);
+    gnn = gpu->dev->newBuffer(nnv.data(), nnv.size() * 2, MTL::ResourceStorageModeShared);
   }
 
   auto runSeg = [&](uint64_t start, uint64_t count, uint64_t histStart, Hist& target, uint64_t total) {
     if (!count) return;
     if (useGPU) {
-      for (uint64_t k = 0; k < count; ++k) {
-        gpuSegment(*gpu, gstate, gth, cores, seed, start + k, 1, histStart, target, total, L, N, nocc, mode);
-        uint8_t* p = (uint8_t*)gstate->contents();
-        for (int c = 0; c < cores; ++c) {
-          std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
-          target.energy[size_t(c) * total + (start - histStart + k)] = float(lats[c].energy());
-        }
-      }
+      gpuSegment(*gpu, gstate, gth, gpc, gnn, cores, seed, start, count, histStart, target, total, L, N, nocc, mode);
+      uint8_t* p = (uint8_t*)gstate->contents();
+      for (int c = 0; c < cores; ++c)
+        std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
     } else {
       cpuSegment(lats, cores, seed, start, count, histStart, th, target, total, nocc, mode);
     }

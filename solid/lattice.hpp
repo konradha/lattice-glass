@@ -22,9 +22,13 @@ inline uint64_t mix(uint64_t x) {
 
 struct Lattice {
   int L = 21, N = 9261;
+  uint32_t lemN = 0, lem6 = 0;
   std::vector<uint8_t> st;
 
-  explicit Lattice(int l = 21) : L(l), N(l * l * l), st(l * l * l, 0) {}
+  explicit Lattice(int l = 21) : L(l), N(l * l * l), st(l * l * l, 0) {
+    lemN = (0u - uint32_t(N)) % uint32_t(N);
+    lem6 = (0u - 6u) % 6u;
+  }
 
   int site(int x, int y, int z) const { return x + L * y + L * L * z; }
   int nb(int s, int d) const {
@@ -48,7 +52,7 @@ struct Lattice {
   }
   int energy() const {
     int e = 0;
-    for (int s = 0; s < N; ++s) e += localEnergy(type(s), count(s));
+    for (int s = 0; s < N; ++s) e += localEnergy(type(s), int(st[s] >> 2));
     return e;
   }
   int torusL1(int a, int b) const {

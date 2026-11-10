@@ -8,9 +8,11 @@ EQ_L="100,100,100,170,493,1591,6923,36324,259751,2000001"
 SW_L="200,200,200,339,985,3181,13846,72648,519502,4000001"
 OUT=campaigns
 mkdir -p "$OUT" plots
+BACKENDS="${BACKENDS:-CPU GPU}"
+MODES="${MODES:-nonlocal local}"
 timeit() { /usr/bin/time -p "$@"; }
-for backend in CPU GPU; do
-  for mode in nonlocal local; do
+for backend in $BACKENDS; do
+  for mode in $MODES; do
     if [ "$mode" = nonlocal ]; then EQ=$EQ_NL; SW=$SW_NL; else EQ=$EQ_L; SW=$SW_L; fi
     tag=$(echo "$backend"_"$mode" | tr A-Z a-z)
     echo "=== $tag $(date -u +%FT%TZ) ==="

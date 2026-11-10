@@ -39,6 +39,19 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import LogLocator, NullLocator, MaxNLocator
+
+plt.rcParams.update({
+    "font.size": 9,
+    "axes.labelsize": 10,
+    "axes.titlesize": 10,
+    "legend.fontsize": 7.5,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "savefig.bbox": "tight",
+})
 
 Float = np.float64
 _TRAPZ = getattr(np, "trapezoid", getattr(np, "trapz", None))
@@ -167,10 +180,45 @@ def _colors(betas: Iterable[float]) -> dict[float, tuple]:
     return {x: cmap(i / max(1, len(b) - 1)) for i, x in enumerate(b)}
 
 
+def figure_energy(runs: list[dict], out: Path) -> None:
+    """Total energy per chain against production sweep for every beta."""
+    rows = [r for r in runs if "energy" in r]
+    if not rows:
+        return
+    n = len(rows)
+    cols = 4
+    nrows = int(math.ceil(n / cols))
+    fig, axes = plt.subplots(nrows, cols, figsize=(3.05 * cols, 2.55 * nrows),
+                             squeeze=False)
+    for i, run in enumerate(rows):
+        ax = axes[i // cols][i % cols]
+        e = np.asarray(run["energy"], dtype=float)
+        if e.ndim == 1:
+            e = e[None, :]
+        equil = int(np.asarray(run.get("meta", [0, 0, 0, 0, 0]))[4])
+        t = np.arange(1, e.shape[1] + 1, dtype=float) + equil
+        for c in range(e.shape[0]):
+            ax.plot(t, e[c], color="0.70", lw=0.55, alpha=0.45)
+        ax.plot(t, e.mean(axis=0), color="C0", lw=1.15)
+        ax.set_xlim(t[0] * 0.85, t[-1] * 1.08)
+        ax.set_title(rf"$\beta={run['beta']:g}$", fontsize=8.5)
+        ax.set_xlabel("production sweep", fontsize=8)
+        ax.set_ylabel("total energy", fontsize=8)
+        ax.tick_params(labelsize=7)
+        if len(t) > 1:
+            ax.xaxis.set_major_locator(MaxNLocator(4))
+    for j in range(n, nrows * cols):
+        axes[j // cols][j % cols].set_visible(False)
+    fig.tight_layout(w_pad=0.8, h_pad=0.9)
+    fig.savefig(out / "total_energy.png", dpi=200)
+    fig.savefig(out / "total_energy.pdf")
+    plt.close(fig)
+
+
 def figure1(runs: list[dict], out: Path) -> dict[float, float]:
     runs = sorted(runs, key=lambda r: r["beta"])
     colors = _colors([r["beta"] for r in runs])
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    fig, axes = plt.subplots(2, 2, figsize=(10.6, 8.1))
     ax = axes.ravel()
     taus: dict[float, float] = {}
     curves: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = []
@@ -178,63 +226,72 @@ def figure1(runs: list[dict], out: Path) -> dict[float, float]:
         b = run["beta"]
         c = colors[b]
         t, q, qe, _ = overlap_curve(run)
+        m = t > 0
         curves.append((b, t, q, qe))
         taus[b] = tau_alpha(t, q)
-        ax[0].errorbar(np.maximum(t, 1e-9), q, yerr=np.maximum(qe, 0),
-                       color=c, marker="o", ms=3, lw=1.2, capsize=0,
-                       label=f"β={b:g}")
-        ax[1].errorbar(np.maximum(t, 1e-9), q, yerr=np.maximum(qe, 0),
-                       color=c, marker="o", ms=3, lw=1.2, capsize=0)
+        ax[0].errorbar(t[m], q[m], yerr=np.maximum(qe[m], 0),
+                       color=c, marker="o", ms=2.6, lw=1.15, capsize=0,
+                       label=rf"$\beta={b:g}$")
+        ax[1].errorbar(t[m], q[m], yerr=np.maximum(qe[m], 0),
+                       color=c, marker="o", ms=2.6, lw=1.15, capsize=0)
+
+    xs = np.concatenate([t[t > 0] for _, t, _, _ in curves])
+    xlim = (xs.min() * 0.8, xs.max() * 1.35)
     ax[0].set_xscale("log")
-    ax[0].set_xlabel("t (sweeps)")
+    ax[0].set_xlim(*xlim)
+    ax[0].set_xlabel(r"$t$ (sweeps)")
     ax[0].set_ylabel(r"$\langle Q(t)\rangle$")
     ax[0].set_ylim(-0.03, 1.03)
-    ax[0].legend(frameon=False, fontsize=8)
-    ax[0].set_title("(a) collective overlap", loc="left")
+    handles, labels = ax[0].get_legend_handles_labels()
+    ax[0].set_title("(a) Collective overlap", loc="left")
     ax[1].set_xscale("log")
-    ax[1].set_xlabel("t (sweeps)")
+    ax[1].set_xlim(*xlim)
+    ax[1].set_xlabel(r"$t$ (sweeps)")
     ax[1].set_ylabel(r"$\langle Q(t)\rangle$")
     ax[1].set_ylim(0.80, 1.005)
-    ax[1].set_title("(b) plateau zoom", loc="left")
+    ax[1].set_title("(b) Plateau zoom", loc="left")
 
     pts = [(1.0 / b, taus[b]) for b in taus if np.isfinite(taus[b]) and taus[b] > 0]
     if pts:
         x, y = np.asarray(pts).T
-        ax[2].semilogy(x, y, "o-", color="black")
+        ax[2].loglog(x, y, "o-", color="black", ms=4, lw=1.1)
         if len(x) >= 3:
             m = x <= np.quantile(x, 0.5)
             if np.count_nonzero(m) >= 2:
                 coef = np.polyfit(x[m], np.log10(y[m]), 1)
-                xx = np.linspace(x.min(), np.quantile(x, 0.5), 50)
-                ax[2].semilogy(xx, 10 ** np.polyval(coef, xx), "--",
-                               color="0.4", label="Arrhenius high-T fit")
-                ax[2].legend(frameon=False, fontsize=8)
+                xx = np.linspace(x[m].min(), x[m].max(), 80)
+                ax[2].loglog(xx, 10 ** np.polyval(coef, xx), "--",
+                             color="0.45", lw=1.0, label="Arrhenius fit")
+                ax[2].legend(frameon=False, loc="upper left")
+        ax[2].set_xlim(x.min() * 0.75, x.max() * 1.3)
     cens = [b for b, v in taus.items() if not np.isfinite(v)]
     if cens:
         ax[2].text(0.02, 0.98, "censored: β=" + ",".join(f"{b:g}" for b in cens),
-                   transform=ax[2].transAxes, va="top", fontsize=8)
+                   transform=ax[2].transAxes, va="top", fontsize=7)
+    ax[2].set_xscale("log")
     ax[2].set_xlabel(r"$1/\beta$")
     ax[2].set_ylabel(r"$\tau_\alpha$ (sweeps)")
-    ax[2].set_title("(c) relaxation time", loc="left")
+    ax[2].set_title("(c) Relaxation time", loc="left")
 
     for b, t, q, _ in curves:
         m = t > 0
         if np.count_nonzero(m) < 2:
             continue
         w = np.geomspace(0.02 / float(t[m].max()), 20.0 / float(t[m].min()), 90)
-        ax[3].loglog(w, spectrum(t, q, w), color=colors[b], lw=1.3,
-                     label=f"β={b:g}")
+        ax[3].loglog(w, spectrum(t, q, w), color=colors[b], lw=1.25,
+                     label=rf"$\beta={b:g}$")
     ax[3].set_xlabel(r"$\omega$")
     ax[3].set_ylabel(r"$\chi''(\omega)$")
-    ax[3].legend(frameon=False, fontsize=8)
-    ax[3].set_title("(d) relaxation spectrum", loc="left")
 
-    fig.tight_layout()
-    fig.savefig(out / "fig1_overlap_tau_spectrum.png", dpi=180)
+    ax[3].set_title("(d) Relaxation spectrum", loc="left")
+
+    fig.tight_layout(w_pad=1.4, h_pad=1.2, rect=(0, 0.055, 1, 1))
+    fig.legend(handles, labels, frameon=False, ncol=4, loc="lower center",
+               bbox_to_anchor=(0.5, 0.002))
+    fig.savefig(out / "fig1_overlap_tau_spectrum.png", dpi=200)
     fig.savefig(out / "fig1_overlap_tau_spectrum.pdf")
     plt.close(fig)
     return taus
-
 
 def figure2(z: np.lib.npyio.NpzFile, out: Path,
             fig2_betas: list[float] | None) -> bool:
@@ -301,6 +358,7 @@ def main(argv=None) -> int:
         taus = figure1(runs, args.output_dir)
         print("tau_alpha:", {f"{b:g}": (None if not np.isfinite(t) else float(t))
                              for b, t in taus.items()})
+    figure_energy(runs, args.output_dir)
     if not args.skip_fig2:
         z = np.load(args.input, allow_pickle=False)
         figure2(z, args.output_dir, args.fig2_betas)

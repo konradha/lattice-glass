@@ -1,5 +1,6 @@
 #pragma once
 #include "lattice.hpp"
+#include "efma.hpp"
 #include <vector>
 #include <cstdint>
 
@@ -20,31 +21,38 @@ inline void addAff(Aff* a, int& n, int s, int which, int bit) {
   ++n;
 }
 
-struct Proposal { int a, b; uint32_t u; bool valid; };
+// One proposal: endpoints, exact index stream, and the first acceptance word.
+// The low acceptance word is drawn lazily by tryProposal only on a hi-word tie.
+struct Proposal {
+  int a = 0, b = 0;
+  bool valid = false;
+  uint32_t u_hi = 0;
+  WordStream rng;
+};
 
 inline Proposal drawProposal(const Lattice& lat, uint64_t seed, int chain,
                              uint64_t index, bool local) {
-  Proposal p{0, 0, 0, false};
-  uint64_t r0 = mix(seed ^ (uint64_t(chain) * 0x9e3779b97f4a7c15ULL) ^
-                    (index * 0xd1342543de82ef95ULL) ^ (local ? 0x1234u : 0x5678u));
-  uint64_t r1 = mix(r0 ^ 0xa0761d6478bd642fULL);
-  uint64_t r2 = mix(r1 ^ 0xe7037ed1a0b428dbULL);
-  p.u = uint32_t(r2 >> 32);
-  const int a = int(r0 % uint64_t(lat.N));
+  Proposal p;
+  p.rng.key = proposalKey(seed, uint64_t(chain), index, local);
+  const int a = int(uniformIndex(p.rng, uint32_t(lat.N), lat.lemN));
   if (local) {
+    const int dir = int(uniformIndex(p.rng, 6u, lat.lem6));
     p.a = a;
-    p.b = lat.nb(a, int(r1 % 6));
+    p.b = lat.nb(a, dir);
     p.valid = true;
+    p.u_hi = p.rng.next();
   } else {
-    const int b = int(r1 % uint64_t(lat.N));
-    p.a = a; p.b = b;
+    const int b = int(uniformIndex(p.rng, uint32_t(lat.N), lat.lemN));
+    p.a = a;
+    p.b = b;
     p.valid = (a != b) && lat.torusL1(a, b) >= 3;
+    if (p.valid) p.u_hi = p.rng.next();
   }
   return p;
 }
 
-inline bool tryProposal(Lattice& lat, const Proposal& p,
-                        const std::vector<uint32_t>& th, int& energy) {
+inline bool tryProposal(Lattice& lat, Proposal& p,
+                        const std::vector<Threshold>& th, int& energy) {
   if (!p.valid) return false;
   const int a = p.a, b = p.b;
   const int ta = lat.type(a), tb = lat.type(b);
@@ -69,32 +77,14 @@ inline bool tryProposal(Lattice& lat, const Proposal& p,
     newE += lat.localEnergy(nt, nm);
   }
   const int dE = newE - oldE;
-  bool ok = dE <= 0;
-  if (!ok) {
-    const int idx = dE + 512;
-    if (idx >= 0 && idx < int(th.size())) ok = p.u < th[idx];
-  }
-  if (!ok) return false;
+  if (!acceptEFMA(p.u_hi, p.rng, th, dE)) return false;
   for (int i = 0; i < na; ++i) lat.st[aff[i].s] = aff[i].ns;
   energy += dE;
   return true;
 }
 
-inline std::vector<uint32_t> makeThresholds(double beta) {
-  std::vector<uint32_t> t(1024);
-  for (int i = 0; i < 1024; ++i) {
-    int dE = i - 512;
-    if (dE <= 0) t[i] = 0xffffffffu;
-    else {
-      double p = std::exp(-beta * double(dE)) * 4294967296.0;
-      t[i] = uint32_t(std::min(std::max(p, 0.0), 4294967295.0));
-    }
-  }
-  return t;
-}
-
 inline int nonlocalSweep(Lattice& lat, uint64_t seed, int chain, uint64_t sweep,
-                         const std::vector<uint32_t>& th, int& energy) {
+                         const std::vector<Threshold>& th, int& energy) {
   int accepted = 0;
   const uint64_t index0 = (2 * sweep + 0) * uint64_t(lat.N);
   for (int t = 0; t < lat.N; ++t) {
@@ -105,7 +95,7 @@ inline int nonlocalSweep(Lattice& lat, uint64_t seed, int chain, uint64_t sweep,
 }
 
 inline int localSweep(Lattice& lat, uint64_t seed, int chain, uint64_t sweep,
-                      const std::vector<uint32_t>& th, int& energy) {
+                      const std::vector<Threshold>& th, int& energy) {
   int accepted = 0;
   const uint64_t index0 = (2 * sweep + 1) * uint64_t(lat.N);
   for (int t = 0; t < lat.N; ++t) {
