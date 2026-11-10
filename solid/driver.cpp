@@ -14,9 +14,15 @@
 #include <algorithm>
 #include <fstream>
 
+#ifndef SOLID_HAVE_METAL
+#define SOLID_HAVE_METAL 0
+#endif
+
+#if SOLID_HAVE_METAL
 #define NS_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
 #include "Metal/Metal.hpp"
+#endif
 
 using namespace solid;
 
@@ -102,27 +108,6 @@ static std::vector<uint8_t> asBytes(const void* p, size_t n) {
   const uint8_t* q = (const uint8_t*)p; return std::vector<uint8_t>(q, q + n);
 }
 
-struct GPU {
-  MTL::Device* dev = nullptr;
-  MTL::CommandQueue* q = nullptr;
-  MTL::ComputePipelineState* pso = nullptr;
-  explicit GPU(const char* path) {
-    dev = MTL::CreateSystemDefaultDevice();
-    if (!dev) { fprintf(stderr, "no Metal device\n"); exit(1); }
-    q = dev->newCommandQueue();
-    std::ifstream mf(path); if (!mf) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
-    std::string src((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
-    NS::Error* err = nullptr;
-    NS::String* ns = NS::String::string(src.c_str(), NS::UTF8StringEncoding);
-    MTL::Library* lib = dev->newLibrary(ns, nullptr, &err);
-    if (!lib) { fprintf(stderr, "MSL compile: %s\n", err ? err->localizedDescription()->utf8String() : "?"); exit(1); }
-    NS::String* fn = NS::String::string("run_segment_warp", NS::UTF8StringEncoding);
-    MTL::Function* f = lib->newFunction(fn);
-    pso = dev->newComputePipelineState(f, &err);
-    if (!pso) { fprintf(stderr, "pipeline: %s\n", err ? err->localizedDescription()->utf8String() : "?"); exit(1); }
-  }
-};
-
 struct Hist { std::vector<float> energy, accLocal, accNonlocal; };
 
 static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
@@ -152,6 +137,29 @@ static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
   });
   for (auto& t : ts) t.join();
 }
+
+#if SOLID_HAVE_METAL
+struct GPU {
+  MTL::Device* dev = nullptr;
+  MTL::CommandQueue* q = nullptr;
+  MTL::ComputePipelineState* pso = nullptr;
+  explicit GPU(const char* path) {
+    dev = MTL::CreateSystemDefaultDevice();
+    if (!dev) { fprintf(stderr, "no Metal device\n"); exit(1); }
+    q = dev->newCommandQueue();
+    std::ifstream mf(path); if (!mf) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
+    std::string src((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+    NS::Error* err = nullptr;
+    NS::String* ns = NS::String::string(src.c_str(), NS::UTF8StringEncoding);
+    MTL::Library* lib = dev->newLibrary(ns, nullptr, &err);
+    if (!lib) { fprintf(stderr, "MSL compile: %s\n", err ? err->localizedDescription()->utf8String() : "?"); exit(1); }
+    NS::String* fn = NS::String::string("run_segment_warp", NS::UTF8StringEncoding);
+    MTL::Function* f = lib->newFunction(fn);
+    pso = dev->newComputePipelineState(f, &err);
+    if (!pso) { fprintf(stderr, "pipeline: %s\n", err ? err->localizedDescription()->utf8String() : "?"); exit(1); }
+  }
+};
+
 
 static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
                        MTL::Buffer* pcbuf, MTL::Buffer* nnbuf,
@@ -191,6 +199,7 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
   }
   eh->release(); al->release(); an->release();
 }
+#endif
 
 int main(int argc, char** argv) {
   if (argc < 9 || argc > 12) {
@@ -208,6 +217,12 @@ int main(int argc, char** argv) {
   int mode = modeStr == "nonlocal" ? 1 : (modeStr == "local" ? 2 : 0);
   uint64_t equil = (argc >= 11) ? strtoull(argv[10], nullptr, 10) : 0;
   std::string statePath = (argc >= 12) ? std::string(argv[11]) : "";
+#if !SOLID_HAVE_METAL
+  if (useGPU) {
+    fprintf(stderr, "WARNING: Metal backend not built; using CPU\n");
+    useGPU = false;
+  }
+#endif
   if (L < 4 || cores < 1) { fprintf(stderr, "bad L/cores\n"); return 2; }
   if (fabs((rho1 + rho2) - rho) > 1e-8)
     fprintf(stderr, "WARNING: rho1+rho2=%.12g != rho=%.12g; using rho1/rho2 for composition\n", rho1 + rho2, rho);
@@ -259,6 +274,7 @@ int main(int argc, char** argv) {
   std::sort(planned.begin(), planned.end());
   planned.erase(std::unique(planned.begin(), planned.end()), planned.end());
 
+#if SOLID_HAVE_METAL
   GPU* gpu = nullptr;
   MTL::Buffer* gstate = nullptr;
   MTL::Buffer* gth = nullptr;
@@ -287,17 +303,20 @@ int main(int argc, char** argv) {
     gpc = gpu->dev->newBuffer(pcv.data(), pcv.size() * 4, MTL::ResourceStorageModeShared);
     gnn = gpu->dev->newBuffer(nnv.data(), nnv.size() * 2, MTL::ResourceStorageModeShared);
   }
+#endif
 
   auto runSeg = [&](uint64_t start, uint64_t count, uint64_t histStart, Hist& target, uint64_t total) {
     if (!count) return;
+#if SOLID_HAVE_METAL
     if (useGPU) {
       gpuSegment(*gpu, gstate, gth, gpc, gnn, cores, seed, start, count, histStart, target, total, L, N, nocc, mode);
       uint8_t* p = (uint8_t*)gstate->contents();
       for (int c = 0; c < cores; ++c)
         std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
-    } else {
-      cpuSegment(lats, cores, seed, start, count, histStart, th, target, total, nocc, mode);
+      return;
     }
+#endif
+    cpuSegment(lats, cores, seed, start, count, histStart, th, target, total, nocc, mode);
   };
 
   if (equil > 0) {
