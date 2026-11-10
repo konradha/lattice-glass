@@ -95,7 +95,7 @@ kernel void run_segment(device uchar* state [[buffer(0)]],
             uint64_t r1=mix64(r0 ^ 0xa0761d6478bd642fUL);
             uint64_t r2=mix64(r1 ^ 0xe7037ed1a0b428dbUL);
             uint a=uint(r0%uint64_t(N)), b=uint(r1%uint64_t(N));
-            if (a!=b && torusL1(a,b,L)>=3 && tryProposal(st,L,N,int(a),int(b),uint(r2>>32),th,energy)) an++;
+            if (a!=b && tryProposal(st,L,N,int(a),int(b),uint(r2>>32),th,energy)) an++;
         }
         uint64_t idx1=(uint64_t(2u)*sw+1u)*uint64_t(N);
         for (uint t=0;t<N && mode!=1u;t++) {
@@ -205,7 +205,7 @@ kernel void run_segment_warp_legacy(device uchar* gstate [[buffer(0)]],
                     a=int(aa);b=int(bb);valid=true;
                 }else{
                     uint aa=uint(r0%uint64_t(N)),bb=uint(r1%uint64_t(N));
-                    if(aa!=bb && torusL1(aa,bb,L)>=3){a=int(aa);b=int(bb);valid=true;}
+                    if(aa!=bb){a=int(aa);b=int(bb);valid=true;}
                 }
                 if(valid){
                     if ((st[a]&3)==(st[b]&3)) noop=true;
@@ -378,7 +378,7 @@ kernel void run_segment_warp(device uchar* gstate [[buffer(0)]],
                         valid = true;
                     } else {
                         uint32_t bb = efIndex(key, wc, wcache, whave, N, lemN);
-                        if (aa != bb && ptdist(pc[aa], pc[bb], L) >= 3) {
+                        if (aa != bb) {
                             a = int(aa);
                             b = int(bb);
                             valid = true;
@@ -404,9 +404,9 @@ kernel void run_segment_warp(device uchar* gstate [[buffer(0)]],
                                     else addEF(aff, na, q, 1, j ^ 1);
                                 }
                             } else {
-                                addEF(aff, na, a, 2, 0); addEF(aff, na, b, 2, 0);
-                                for (int j = 0; j < 6; ++j) addEF(aff, na, int(nn[uint(a) * 6u + uint(j)]), 0, j ^ 1);
-                                for (int j = 0; j < 6; ++j) addEF(aff, na, int(nn[uint(b) * 6u + uint(j)]), 1, j ^ 1);
+                                addW(aff, na, a, 2, 0); addW(aff, na, b, 2, 0);
+                                for (int j = 0; j < 6; ++j) addW(aff, na, int(nn[uint(a) * 6u + uint(j)]), 0, j ^ 1);
+                                for (int j = 0; j < 6; ++j) addW(aff, na, int(nn[uint(b) * 6u + uint(j)]), 1, j ^ 1);
                             }
                             int oa = (tb != 0), ob = (ta != 0), oldE = 0, newE = 0;
                             for (int i = 0; i < na; ++i) {
@@ -474,9 +474,9 @@ kernel void run_segment_warp(device uchar* gstate [[buffer(0)]],
                             else addEF(aff, na, q, 1, j ^ 1);
                         }
                     } else {
-                        addEF(aff, na, a, 2, 0); addEF(aff, na, b, 2, 0);
-                        for (int j = 0; j < 6; ++j) addEF(aff, na, int(nn[uint(a) * 6u + uint(j)]), 0, j ^ 1);
-                        for (int j = 0; j < 6; ++j) addEF(aff, na, int(nn[uint(b) * 6u + uint(j)]), 1, j ^ 1);
+                        addW(aff, na, a, 2, 0); addW(aff, na, b, 2, 0);
+                        for (int j = 0; j < 6; ++j) addW(aff, na, int(nn[uint(a) * 6u + uint(j)]), 0, j ^ 1);
+                        for (int j = 0; j < 6; ++j) addW(aff, na, int(nn[uint(b) * 6u + uint(j)]), 1, j ^ 1);
                     }
                     int oa = (tb != 0), ob = (ta != 0), oldE = 0, newE = 0;
                     for (int i = 0; i < na; ++i) {

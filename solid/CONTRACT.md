@@ -30,8 +30,8 @@ History sampling must not change the sampled chain. Re-run `make test` and
 - No floating-point index conversion is permitted.
 
 ## Proposals
-- Nonlocal: draw `a` and `b` by exact Lemire. Reject when `a == b` or when torus
-L1 distance is less than 3. The two affected neighborhoods are then independent.
+- Nonlocal: draw any `a != b` by exact Lemire. Do not reject neighbor or
+distance-2 pairs. The affected set must be deduplicated before the energy delta.
 - Local: draw `a` by exact Lemire, direction from exact Lemire with `n = 6`, and
 swap `a` with that neighbor.
 - A proposal with equal endpoint types is a no-op. It consumes its index and

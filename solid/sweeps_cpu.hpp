@@ -45,7 +45,7 @@ inline Proposal drawProposal(const Lattice& lat, uint64_t seed, int chain,
     const int b = int(uniformIndex(p.rng, uint32_t(lat.N), lat.lemN));
     p.a = a;
     p.b = b;
-    p.valid = (a != b) && lat.torusL1(a, b) >= 3;
+    p.valid = (a != b);
     if (p.valid) p.u_hi = p.rng.next();
   }
   return p;
