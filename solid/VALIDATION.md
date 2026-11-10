@@ -104,3 +104,91 @@ micromamba run -n rsmi python solid/plot_paper.py \
   --input campaigns_linspace/gpu_nonlocal.npz \
   --output-dir plots_linspace/gpu_nonlocal_paper --skip-fig2
 ```
+
+## 8. CUDA and Modal
+
+CPU physics is authoritative at clean-solid `50fb57a`, including any-pair
+nonlocal proposals. CUDA supports L4 through L21, with L8/L21 specializations.
+Acceptance uses the CPU-built uint64 threshold table; no device `exp`.
+
+```bash
+make -C solid HAVE_CUDA=1 HAVE_METAL=0
+make -C solid cuda_check_prepare
+./solid/cuda_check_prepare --prepare solid/cuda_fixtures.bin --final-seed 15637821895788547078
+modal run tools/modal_cuda_app.py --budget-usd 1.0 --action bench --gpu L40S --seconds 0.5
+```
+
+The pinned toolchain image is built once. Source/fixtures are mounted; native
+builds run without a GPU and persist in `lattice-cuda-builds`. Python tool edits
+do not invalidate native builds. Reservations are enforced before compute.
+Queue plus execution waits are bounded; call-graph snapshots are not used as a
+reliable indication that a container has started.
+
+CUDA driver selection is `CUDA`, not the Metal `GPU` selector. Use
+`--cuda-window 256` for the measured best configuration. `--start-sweep` resumes
+the full uint64 proposal counter from an imported raw state.
+
+Campaign example (explicit budget authorizes future compute; not run as part of
+the development budget):
+
+```bash
+modal run tools/modal_cuda_app.py --budget-usd 1.0 --action campaign --gpu L40S \
+  --run sample --betas 2.8,3.2 --mode nonlocal --chains 16384 --batches 284 \
+  --sweeps 100000 --equil 10000 --window 256 --chunk-sweeps 4096 --max-chunks 64
+```
+
+Repeat identical settings to resume; `--calls` controls the number of authorized
+bounded calls. Run local dynamics separately with `--mode local --chains 32`.
+Check downloaded Volume data with
+`python3 tools/check_cuda_campaign.py DOWNLOADED_RUN_DIRECTORY`.
+
+### Exercised results, L40S, L21, beta 3.2
+
+| Move | CPU core, M attempts/s | Isolated GPU chain, M/s | 142 chains, M/s per chain | Best card aggregate, G/s |
+| --- | ---: | ---: | ---: | ---: |
+| Local | 7.85 | 84.09 | 77.60 | 20.10 (568 chains) |
+| Nonlocal | 7.60 | 121.83 | 110.28 | 27.14 (284 chains) |
+
+All windows 1/32/64/128/256 passed CPU-byte, per-sweep energy/counter, and trace
+comparisons before timing. Multi-chain grids included 142/284/568/1136 chains.
+Memcheck, racecheck, and synccheck were clean for both moves and all windows.
+Selected W256 passed 100,000,278 proposals per move with held-out chain 1,000,000.
+Six real Modal checkpoint chunks, including resume, were downloaded and exactly
+replayed against this branch's CPU implementation.
+
+Rates count every attempt, including no-ops/rejections. Timings are CUDA events
+after 1024 warm-up sweeps, with at least 0.5 measured kernel seconds per shape;
+they exclude transfers/checkpointing and are not equilibrium certification.
+At 142 simultaneous chains, one billion sweeps per chain projects to 33.15 hours
+local or 23.33 hours nonlocal, kernel-only. The two-hour target was not reached.
+Only L40S was runtime-validated; sm89/sm90 compilation is not an H100 measurement.
+
+Native-source digest:
+`9a5af33e466b8ad30ea2e18e87b2637a59ea70f9f24a28b71499ae94b1e720c1`.
+Raw receipts and CPU replay: `modal_cuda_results/`; conservative development
+reservations total USD 0.99, not an invoice. No CUDA changes were pushed.
+
+## 9. Integration with solid-opt at 070c2d6
+
+The upstream addition of `solid-opt/` leaves the GPU-validated native source
+digest above unchanged. Both sm89/sm90 CUDA targets rebuild successfully.
+CPU production regressions, including full-width seeds and counter-based resume,
+pass after the merge.
+
+Original and optimized CPU backends matched all 13 shared output fields in 36
+cases: L4/L8/L21, beta 2.8/3.2, local/nonlocal/both, two full-width seeds, three
+chains, equilibration, and decimated histories. The optimized CPU also reproduced
+both complete downloaded CUDA smoke campaigns, including checkpoint boundaries,
+energies, acceptance histories, and snapshots.
+
+Nonlocal sampling is two independent uniform site draws. Self-pairs and
+same-state pairs consume attempts without changing the lattice; there is no
+nearest-neighbor or distance-two exclusion. The CPU reference traces actually
+compared with CUDA contain 79 accepted adjacent nonlocal moves and 379 accepted
+distance-two moves across the reference cases. These are coverage counts, not
+independent statistical samples. CUDA uses the adjacent correction at distance
+one and removes the double-counted occupied-common-neighbor terms at distance two.
+No additional CUDA discrepancy was found.
+
+The CPU rates in section 8 are for the original `solid/` reference, not the newly
+added optimized backend. This integration used no additional GPU compute.

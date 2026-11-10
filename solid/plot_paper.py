@@ -69,7 +69,7 @@ def load_runs(path: Path) -> list[dict]:
             for key in ("initial", "equilibrated", "final", "snapshots",
                         "snapshot_sweeps", "energy", "accept_local",
                         "accept_nonlocal", "scalars", "meta", "seed",
-                        "history_every", "history_sweeps"):
+                        "history_every", "history_sweeps", "start_sweep"):
                 if p + key in z.files:
                     d[key] = z[p + key]
             out.append(d)
@@ -79,7 +79,7 @@ def load_runs(path: Path) -> list[dict]:
     for key in ("initial", "equilibrated", "final", "snapshots",
                 "snapshot_sweeps", "energy", "accept_local",
                 "accept_nonlocal", "scalars", "meta", "seed",
-                "history_every", "history_sweeps"):
+                "history_every", "history_sweeps", "start_sweep"):
         if key in z.files:
             d[key] = z[key]
     return [d]
@@ -198,8 +198,9 @@ def figure_energy(runs: list[dict], out: Path) -> None:
         if e.ndim == 1:
             e = e[None, :]
         equil = int(np.asarray(run.get("meta", [0, 0, 0, 0, 0]))[4])
+        start = int(np.asarray(run.get("start_sweep", [0]))[0])
         t = (np.asarray(run["history_sweeps"], dtype=float) if "history_sweeps" in run
-             else np.arange(1, e.shape[1] + 1, dtype=float)) + equil
+             else np.arange(1, e.shape[1] + 1, dtype=float)) + equil + start
         for c in range(e.shape[0]):
             ax.plot(t, e[c], color="0.70", lw=0.55, alpha=0.45)
         ax.plot(t, e.mean(axis=0), color="C0", lw=1.15)

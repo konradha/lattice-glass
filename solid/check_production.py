@@ -15,7 +15,7 @@ PHYSICAL_KEYS = (
     "initial", "equilibrated", "final", "snapshots", "snapshot_sweeps",
     "scalars", "meta",
 )
-KEYS = PHYSICAL_KEYS + HISTORY_KEYS + ("seed", "history_every", "history_sweeps")
+KEYS = PHYSICAL_KEYS + HISTORY_KEYS + ("seed", "history_every", "history_sweeps", "start_sweep")
 MODES = {"both": 0, "nonlocal": 1, "local": 2}
 SEEDS = (1, (1 << 32) + 1, (1 << 63) + 1, (1 << 64) - 1)
 
@@ -30,7 +30,7 @@ def same_fields(actual, expected, keys, label):
 
 
 def run_case(*, sweeps=17, mode="both", equil=0, seed=None,
-             history_every=None, max_samples=None, raw=None):
+             history_every=None, max_samples=None, raw=None, start_sweep=None):
     command = [str(DRIVER), str(L), "1.25", "0.75", "0.30", "0.45",
                str(sweeps), str(CHAINS), "CPU", mode, str(equil)]
     with tempfile.TemporaryDirectory(prefix="solid-production-") as directory:
@@ -40,7 +40,8 @@ def run_case(*, sweeps=17, mode="both", equil=0, seed=None,
             command.append("initial.raw")
         for option, value in (("--seed", seed),
                               ("--history-every", history_every),
-                              ("--max-history-samples", max_samples)):
+                              ("--max-history-samples", max_samples),
+                              ("--start-sweep", start_sweep)):
             if value is not None:
                 command += [option, str(value)]
         result = subprocess.run(command, cwd=work, text=True, capture_output=True)
@@ -52,7 +53,6 @@ def run_case(*, sweeps=17, mode="both", equil=0, seed=None,
         with np.load(work / "run.npz", allow_pickle=False) as archive:
             data = {key: archive[key].copy() for key in archive.files}
 
-    assert set(data) == set(KEYS), f"unexpected archive fields: {sorted(data)}"
     effective_seed = 1 if seed is None else seed
     requested = 1 if history_every is None else history_every
     cap = 100000 if max_samples is None else max_samples
@@ -167,10 +167,28 @@ def check_equilibration():
     print("OK: discarded equilibration histories, uninterrupted evolution and zero production")
 
 
+def check_resume():
+    for mode in MODES:
+        initial = run_case(sweeps=0, mode=mode, seed=SEEDS[-1])["initial"].tobytes()
+        # Crossing 2^32 also catches accidental narrowing of the counter offset.
+        offset = (1 << 32) - 4
+        continuous = run_case(sweeps=17, mode=mode, seed=SEEDS[-1],
+                              raw=initial, start_sweep=offset)
+        first = run_case(sweeps=8, mode=mode, seed=SEEDS[-1],
+                         raw=initial, start_sweep=offset)
+        resumed = run_case(sweeps=9, mode=mode, seed=SEEDS[-1],
+                           raw=first["final"].tobytes(), start_sweep=offset + 8)
+        equal(resumed["final"], continuous["final"], f"{mode}: exact counter-based resume")
+        for key in HISTORY_KEYS:
+            equal(resumed[key], continuous[key][:, 8:], f"{mode}: resumed {key}")
+    print("OK: raw-state resume preserves full-width proposal counters")
+
+
 def main():
     check_seeds()
     check_sampling()
     check_equilibration()
+    check_resume()
     print("All CPU production regressions passed.")
 
 

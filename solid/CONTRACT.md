@@ -86,3 +86,38 @@ writes total energy after every sweep. Initial GPU energy is a warp reduction.
 - Compared fields: initial, equilibrated, final, snapshot sweeps, snapshots,
 energy, local acceptance, nonlocal acceptance, scalars, metadata, seed, history
 interval, and history sweep timestamps.
+
+## CUDA exactness argument
+- The CPU implementation on clean-solid is authoritative, including its fixed
+  per-proposal SplitMix64/Lemire word stream and integer EFMA table. CUDA must
+  not change proposal selection, no-op accounting, or acceptance thresholds.
+- Cache each site's type, occupied-neighbor count `m`, and
+  `S = sum_j occupied(j) * (m_j - ell_j)` over its six neighbors. Unlike-type
+  particle swaps change only the two endpoint site energies. For particle-hole
+  moves separated by more than two, the neighbor energy changes sum to
+  `-2*S_a + m_a + 2*S_b + m_b`. For adjacent endpoints (local or nonlocal), exclude
+  the departing particle from the arrival neighborhood, giving
+  `(m_b-1-ell)^2-(m_a-ell)^2-2*S_a+m_a+2*(S_b-m_a+ell)+m_b-1`.
+- At distance two, subtract two for each occupied common neighbor from the
+  separated-endpoint formula: its occupancy change is zero, whereas the two
+  independently evaluated quadratic changes incorrectly contribute two.
+  Count distinct common neighbors explicitly, including periodic L4 cases.
+- On acceptance, update type/count in the deduplicated endpoint neighborhoods.
+  For each changed `q_j = occupied(j)*(m_j-ell_j)`, add its exact integer
+  difference to each neighboring `S`. Cooperative shared-memory atomic adds
+  commute; all readers wait until the update is complete.
+- A speculative proposal reads cached endpoint values. An accepted predecessor
+  can change these only within distance two of an endpoint. Cut before the first
+  such dependency, including rejected and no-op proposals. Accepted proposals
+  before that cut have their serial outcomes. Commit them in order, retain the
+  suffix's proposal indices, and synchronize before the next evaluation.
+- Separate local and nonlocal template instantiations may use different window
+  sizes and launch occupancy; none of these choices may alter the serial chain.
+- Ordered commit may iterate set bits of the acceptance ballots instead of every
+  proposal: ascending warp number and ascending bit number preserve serial order.
+- A one-warp block may replace block barriers with full-mask `__syncwarp`, since
+  every physical lane participates; larger blocks retain `__syncthreads`.
+- Dependency radius can follow the fields actually read: a no-op reads endpoint
+  types (radius zero); unlike particles read types/counts (radius one); a
+  particle-hole move reads `S` (radius two). A predecessor changing the endpoint
+  types is caught even if it changes which of these cases applies on replay.

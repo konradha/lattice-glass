@@ -132,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rho1", type=float, default=0.30)
     p.add_argument("--rho2", type=float, default=0.45)
     p.add_argument("--chains", type=int, default=8)
-    p.add_argument("--backend", choices=["CPU", "GPU"], default="GPU")
+    p.add_argument("--backend", choices=["CPU", "GPU", "CUDA"], default="GPU")
     p.add_argument("--mode", choices=["both", "nonlocal", "local"], default="nonlocal")
     p.add_argument("--sweeps", default="auto", help="production sweeps per chain, or auto")
     p.add_argument("--equilibration", default="auto", help="equilibration sweeps per chain, or auto")
@@ -150,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--estimate-only", action="store_true")
     p.add_argument("--seed", type=parse_uint64, default=1)
+    p.add_argument("--cuda-window", type=int, choices=[1, 32, 64, 128, 256], default=128)
     p.add_argument("--history-every", type=parse_positive_uint64, default=1,
                    help="requested interval between production history samples")
     p.add_argument("--max-history-samples", type=parse_positive_uint64, default=100000,
@@ -244,6 +245,7 @@ def run_one(args, item: dict, root: Path) -> dict:
         str(args.chains), args.backend, args.mode, str(item["equilibration"]),
         "--seed", str(args.seed), "--history-every", str(args.history_every),
         "--max-history-samples", str(args.max_history_samples),
+        "--cuda-window", str(args.cuda_window),
     ]
     t0 = time.time()
     p = subprocess.run(cmd, cwd=wd, text=True, capture_output=True)
@@ -270,7 +272,7 @@ def aggregate(results: Sequence[dict], args) -> None:
         for key in ("initial", "equilibrated", "final", "snapshots",
                     "snapshot_sweeps", "energy", "accept_local",
                     "accept_nonlocal", "scalars", "meta", "seed",
-                    "history_every", "history_sweeps"):
+                    "history_every", "history_sweeps", "start_sweep"):
             if key in z.files:
                 out[f"beta_{i}_{key}"] = z[key]
     np.savez_compressed(args.output, **out)

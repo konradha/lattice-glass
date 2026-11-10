@@ -25,6 +25,13 @@
 #include "Metal/Metal.hpp"
 #endif
 
+#ifndef SOLID_HAVE_CUDA
+#define SOLID_HAVE_CUDA 0
+#endif
+#if SOLID_HAVE_CUDA
+#include "cuda_backend.hpp"
+#endif
+
 using namespace solid;
 
 // ---------------------------------------------------------------------------
@@ -212,7 +219,7 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
 
 int main(int argc, char** argv) {
   if (argc < 9) {
-    fprintf(stderr, "usage: %s L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU [both|nonlocal|local] [EQUIL_SWEEPS] [STATE_RAW] [--seed N] [--history-every N] [--max-history-samples N]\n", argv[0]);
+    fprintf(stderr, "usage: %s L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU|CUDA [both|nonlocal|local] [EQUIL_SWEEPS] [STATE_RAW] [--seed N] [--history-every N] [--max-history-samples N] [--cuda-window N] [--start-sweep N]\n", argv[0]);
     return 2;
   }
   int L = atoi(argv[1]);
@@ -222,7 +229,9 @@ int main(int argc, char** argv) {
   uint64_t sweeps = strtoull(argv[6], nullptr, 10);
   int cores = atoi(argv[7]);
   bool useGPU = std::string(argv[8]) == "GPU" || std::string(argv[8]) == "gpu" || std::string(argv[8]) == "1";
+  bool useCUDA = std::string(argv[8]) == "CUDA" || std::string(argv[8]) == "cuda";
   uint64_t seed = 1, historyEvery = 1, maxHistorySamples = 100000;
+  uint64_t cudaWindow = 128, startSweep = 0;
   std::vector<std::string> positional;
   for (int i = 9; i < argc; ++i) {
     std::string arg = argv[i];
@@ -230,7 +239,8 @@ int main(int argc, char** argv) {
       positional.push_back(arg);
       continue;
     }
-    if (arg != "--seed" && arg != "--history-every" && arg != "--max-history-samples") {
+    if (arg != "--seed" && arg != "--history-every" && arg != "--max-history-samples" &&
+        arg != "--cuda-window" && arg != "--start-sweep") {
       fprintf(stderr, "unknown option: %s\n", arg.c_str()); return 2;
     }
     if (++i == argc) { fprintf(stderr, "missing value for %s\n", arg.c_str()); return 2; }
@@ -238,18 +248,27 @@ int main(int argc, char** argv) {
     errno = 0;
     uint64_t value = strtoull(argv[i], &end, 10);
     if (argv[i][0] == '-' || end == argv[i] || *end || errno == ERANGE ||
-        (arg != "--seed" && value == 0)) {
+        (arg != "--seed" && arg != "--start-sweep" && value == 0)) {
       fprintf(stderr, "invalid value for %s: %s\n", arg.c_str(), argv[i]); return 2;
     }
     if (arg == "--seed") seed = value;
     else if (arg == "--history-every") historyEvery = value;
-    else maxHistorySamples = value;
+    else if (arg == "--max-history-samples") maxHistorySamples = value;
+    else if (arg == "--cuda-window") cudaWindow = value;
+    else startSweep = value;
   }
   if (positional.size() > 3) { fprintf(stderr, "too many positional arguments\n"); return 2; }
   std::string modeStr = positional.empty() ? "both" : positional[0];
   int mode = modeStr == "nonlocal" ? 1 : (modeStr == "local" ? 2 : 0);
   uint64_t equil = positional.size() >= 2 ? strtoull(positional[1].c_str(), nullptr, 10) : 0;
   std::string statePath = positional.size() >= 3 ? positional[2] : "";
+  if (cudaWindow != 1 && cudaWindow != 32 && cudaWindow != 64 &&
+      cudaWindow != 128 && cudaWindow != 256) {
+    fprintf(stderr, "CUDA window must be 1, 32, 64, 128, or 256\n"); return 2;
+  }
+#if !SOLID_HAVE_CUDA
+  if (useCUDA) { fprintf(stderr, "CUDA backend not built; use make HAVE_CUDA=1\n"); return 2; }
+#endif
 #if !SOLID_HAVE_METAL
   if (useGPU) {
     fprintf(stderr, "WARNING: Metal backend not built; using CPU\n");
@@ -343,21 +362,45 @@ int main(int argc, char** argv) {
     gnn = gpu->dev->newBuffer(nnv.data(), nnv.size() * 2, MTL::ResourceStorageModeShared);
   }
 #endif
+#if SOLID_HAVE_CUDA
+  CudaBackend* cuda = useCUDA ? new CudaBackend(L, cores, seed, initial, th, int(cudaWindow)) : nullptr;
+  CudaResult cudaResult;
+#endif
 
   auto runSeg = [&](uint64_t start, uint64_t count, uint64_t histStart, Hist& target, uint64_t total) {
     // Bound temporary GPU histories too, including discarded equilibration output.
     while (count) {
       uint64_t chunk = std::min<uint64_t>(count, 4096);
+#if SOLID_HAVE_CUDA
+      if (useCUDA) {
+        CudaResult& result = cudaResult;
+        cuda->run(startSweep + start, uint32_t(chunk), mode, result);
+        for (int c = 0; c < cores; ++c) {
+          std::copy(result.state.begin() + size_t(c) * N,
+                    result.state.begin() + size_t(c + 1) * N, lats[c].st.begin());
+          if (!total) continue;
+          for (uint64_t j = 0; j < chunk; ++j) {
+            uint64_t elapsed = start - histStart + j + 1;
+            if (elapsed % target.every != 0 && elapsed != target.sweeps) continue;
+            uint64_t dst = uint64_t(c) * total + (elapsed - 1) / target.every;
+            uint64_t src = uint64_t(c) * chunk + j;
+            target.energy[dst] = float(result.energy[src]);
+            target.accLocal[dst] = float(result.acceptLocal[src]) / float(N);
+            target.accNonlocal[dst] = float(result.acceptNonlocal[src]) / float(N);
+          }
+        }
+      } else
+#endif
 #if SOLID_HAVE_METAL
       if (useGPU) {
-        gpuSegment(*gpu, gstate, gth, gpc, gnn, cores, seed, start, chunk, histStart, target, total, L, N, nocc, mode);
+        gpuSegment(*gpu, gstate, gth, gpc, gnn, cores, seed, startSweep + start, chunk, startSweep + histStart, target, total, L, N, nocc, mode);
         uint8_t* p = (uint8_t*)gstate->contents();
         for (int c = 0; c < cores; ++c)
           std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
       } else
 #endif
       {
-        cpuSegment(lats, cores, seed, start, chunk, histStart, th, target, total, nocc, mode);
+        cpuSegment(lats, cores, seed, startSweep + start, chunk, startSweep + histStart, th, target, total, nocc, mode);
       }
       start += chunk;
       count -= chunk;
@@ -398,6 +441,9 @@ int main(int argc, char** argv) {
     runSeg(equil + cur, sweeps - cur, equil, hist, samples);
     cur = sweeps;
   }
+#if SOLID_HAVE_CUDA
+  delete cuda;
+#endif
   std::vector<uint8_t> finalState(size_t(cores) * N);
   for (int c = 0; c < cores; ++c)
     std::copy(lats[c].st.begin(), lats[c].st.end(), finalState.begin() + size_t(c) * N);
@@ -427,6 +473,7 @@ int main(int argc, char** argv) {
          asBytes(historySweeps.data(), historySweeps.size() * 8));
   zipAdd(z, entries, "history_every.npy", "<u8", {1}, asBytes(&hist.every, sizeof(hist.every)));
   zipAdd(z, entries, "seed.npy", "<u8", {1}, asBytes(&seed, sizeof(seed)));
+  zipAdd(z, entries, "start_sweep.npy", "<u8", {1}, asBytes(&startSweep, sizeof(startSweep)));
   double scal[4] = {beta, rho, rho1, rho2};
   zipAdd(z, entries, "scalars.npy", "<f8", {4}, asBytes(scal, sizeof(scal)));
   uint64_t meta[5] = {(uint64_t)L, (uint64_t)cores, sweeps, (uint64_t)mode, equil};

@@ -1,0 +1,8 @@
+solid/driver
+solid/cuda_backend.o
+solid/cuda_check
+solid/cuda_check_prepare
+solid/cuda_fixtures.bin
+**/__pycache__/
+.modal_cuda_budget.json*
+modal_cuda_results/
