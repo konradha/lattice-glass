@@ -46,6 +46,9 @@ python3 check_correctness.py --long
 The gate compares initial, equilibrated, and final states, snapshots, energy,
 acceptance histories, scalars, metadata, seed, and decimation fields.
 
+High-beta gate: L21, beta 2.5, 160k sweeps, 8 chains, CPU vs Metal:
+`solid-opt` CPU 116 s, Metal 172 s, all fields equal.
+
 Algorithmic changes would be allowed only with a stationarity gate: Geweke’s
 joint-distribution test or SBC, plus exact tiny-lattice references. No such change
 is present in this directory.
