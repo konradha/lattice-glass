@@ -1,0 +1,169 @@
+#pragma once
+#include "lattice.hpp"
+#include "efma.hpp"
+#include <vector>
+#include <cstdint>
+
+namespace solid {
+
+// Proposal order, Lemire index draws, the RNG word stream, and EFMA acceptance
+// are unchanged from the base implementation. Only avoidable work is removed:
+// a compile-time energy table replaces popcount arithmetic, the far/near
+// affected-set choice short-circuits after one coordinate, and type swaps
+// between two occupied sites update exactly the two type bits.
+//
+// Aff is one affected site: the site index, the mask bit (index + 1, 0 = none)
+// written for each endpoint, and the packed byte to commit on acceptance.
+struct Aff { int s; uint8_t ba, bb, ns; };
+
+inline void addAff(Aff* a, int& n, int s, int which, int bit) {
+  for (int i = 0; i < n; ++i) if (a[i].s == s) {
+    if (which == 0) a[i].ba = uint8_t(bit + 1);
+    if (which == 1) a[i].bb = uint8_t(bit + 1);
+    return;
+  }
+  a[n].s = s;
+  a[n].ba = (which == 0) ? uint8_t(bit + 1) : 0;
+  a[n].bb = (which == 1) ? uint8_t(bit + 1) : 0;
+  a[n].ns = 0;
+  ++n;
+}
+
+// One proposal: endpoints, exact index stream, and the first acceptance word.
+// The low acceptance word is drawn lazily by tryProposal only on a hi-word tie.
+struct Proposal {
+  int a = 0, b = 0;
+  bool valid = false;
+  bool local = false;
+  uint32_t u_hi = 0;
+  WordStream rng;
+};
+
+inline Proposal drawProposal(const Lattice& lat, uint64_t seed, int chain,
+                             uint64_t index, bool local) {
+  Proposal p;
+  p.local = local;
+  p.rng.key = proposalKey(seed, uint64_t(chain), index, local);
+  const int a = int(uniformIndex(p.rng, uint32_t(lat.N), lat.lemN));
+  if (local) {
+    const int dir = int(uniformIndex(p.rng, 6u, lat.lem6));
+    p.a = a;
+    p.b = lat.nb(a, dir);
+    p.valid = true;
+    p.u_hi = p.rng.next();
+  } else {
+    const int b = int(uniformIndex(p.rng, uint32_t(lat.N), lat.lemN));
+    p.a = a;
+    p.b = b;
+    p.valid = (a != b);
+    if (p.valid) p.u_hi = p.rng.next();
+  }
+  return p;
+}
+
+inline void addFixed(Aff* a, int& n, int s, int which, int bit) {
+  a[n].s = s;
+  a[n].ba = (which == 0) ? uint8_t(bit + 1) : 0;
+  a[n].bb = (which == 1) ? uint8_t(bit + 1) : 0;
+  a[n].ns = 0;
+  ++n;
+}
+
+inline bool tryProposal(Lattice& lat, Proposal& p,
+                        const std::vector<Threshold>& th, int& energy) {
+  if (!p.valid) return false;
+  const int a = p.a, b = p.b;
+  uint8_t* const st = lat.st.data();
+  const uint8_t va = st[a], vb = st[b];
+  const int ta = siteType(va), tb = siteType(vb);
+  if (ta == tb) return false;  // equal types: the move is an exact no-op
+
+  // Occupancy-preserving fast path. With both endpoints occupied, swapping
+  // their types leaves every neighbor mask unchanged: masks only record
+  // whether a neighbor is nonempty, and both species are nonempty. So only
+  // the type bits of a and b change, only their local energies can contribute
+  // to dE, and the committed bytes are exactly what the general affected-set
+  // update below would produce. Two species swaps are the majority of
+  // proposals at the usual densities.
+  if (ta != 0 && tb != 0) {
+    const uint8_t newA = packSite(tb, siteMask(va));
+    const uint8_t newB = packSite(ta, siteMask(vb));
+    const int dE = packedEnergy(newA) + packedEnergy(newB) -
+                   packedEnergy(va) - packedEnergy(vb);
+    if (!acceptEFMA(p.u_hi, p.rng, th, dE)) return false;
+    st[a] = newA;
+    st[b] = newB;
+    energy += dE;
+    return true;
+  }
+
+  Aff aff[14]; int na = 0;
+  if (p.local) {
+    addFixed(aff, na, a, 2, 0); addFixed(aff, na, b, 2, 0);
+    for (int j = 0; j < 6; ++j) {
+      int q = lat.nb(a, j);
+      if (q == b) aff[1].ba = uint8_t((j ^ 1) + 1);
+      else addFixed(aff, na, q, 0, j ^ 1);
+    }
+    for (int j = 0; j < 6; ++j) {
+      int q = lat.nb(b, j);
+      if (q == a) aff[0].bb = uint8_t((j ^ 1) + 1);
+      else addFixed(aff, na, q, 1, j ^ 1);
+    }
+  } else if (!lat.nearPair(a, b)) {
+    addFixed(aff, na, a, 2, 0); addFixed(aff, na, b, 2, 0);
+    for (int j = 0; j < 6; ++j) addFixed(aff, na, lat.nb(a, j), 0, j ^ 1);
+    for (int j = 0; j < 6; ++j) addFixed(aff, na, lat.nb(b, j), 1, j ^ 1);
+  } else {
+    addAff(aff, na, a, 2, 0);
+    addAff(aff, na, b, 2, 0);
+    for (int j = 0; j < 6; ++j) addAff(aff, na, lat.nb(a, j), 0, j ^ 1);
+    for (int j = 0; j < 6; ++j) addAff(aff, na, lat.nb(b, j), 1, j ^ 1);
+  }
+  const int oa = (tb != 0), ob = (ta != 0);
+  int oldE = 0, newE = 0;
+  for (int i = 0; i < na; ++i) {
+    const int s = aff[i].s;
+    const uint8_t v = st[s];
+    oldE += packedEnergy(v);
+    int nm = siteMask(v);
+    if (aff[i].ba) { const int bit = aff[i].ba - 1; nm = (nm & ~(1 << bit)) | (oa << bit); }
+    if (aff[i].bb) { const int bit = aff[i].bb - 1; nm = (nm & ~(1 << bit)) | (ob << bit); }
+    // Endpoints take the other endpoint's type; every other site keeps its own.
+    const int nt = (s == a) ? tb : ((s == b) ? ta : siteType(v));
+    const uint8_t ns = packSite(nt, nm);
+    aff[i].ns = ns;
+    newE += packedEnergy(ns);
+  }
+  const int dE = newE - oldE;
+  if (!acceptEFMA(p.u_hi, p.rng, th, dE)) return false;
+  for (int i = 0; i < na; ++i) st[aff[i].s] = aff[i].ns;
+  energy += dE;
+  return true;
+}
+
+inline int nonlocalSweep(Lattice& lat, uint64_t seed, int chain, uint64_t sweep,
+                         const std::vector<Threshold>& th, int& energy) {
+  int accepted = 0;
+  const int N = lat.N;
+  const uint64_t index0 = (2 * sweep + 0) * uint64_t(N);
+  for (int t = 0; t < N; ++t) {
+    Proposal p = drawProposal(lat, seed, chain, index0 + uint64_t(t), false);
+    if (tryProposal(lat, p, th, energy)) ++accepted;
+  }
+  return accepted;
+}
+
+inline int localSweep(Lattice& lat, uint64_t seed, int chain, uint64_t sweep,
+                      const std::vector<Threshold>& th, int& energy) {
+  int accepted = 0;
+  const int N = lat.N;
+  const uint64_t index0 = (2 * sweep + 1) * uint64_t(N);
+  for (int t = 0; t < N; ++t) {
+    Proposal p = drawProposal(lat, seed, chain, index0 + uint64_t(t), true);
+    if (tryProposal(lat, p, th, energy)) ++accepted;
+  }
+  return accepted;
+}
+
+} // namespace solid
