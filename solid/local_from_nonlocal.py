@@ -23,7 +23,8 @@ def aggregate(results):
     for i, r in enumerate(results):
         z = np.load(r["npz"], allow_pickle=False)
         for key in ("initial","equilibrated","final","snapshots","snapshot_sweeps",
-                    "energy","accept_local","accept_nonlocal","scalars","meta"):
+                    "energy","accept_local","accept_nonlocal","scalars","meta",
+                    "seed","history_every","history_sweeps"):
             if key in z.files:
                 out[f"beta_{i}_{key}"] = z[key]
     np.savez_compressed(OUT, **out)

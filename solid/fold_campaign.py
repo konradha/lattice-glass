@@ -48,7 +48,8 @@ def aggregate(mode: str, backend: str, results: list[dict], outdir: Path) -> Pat
     for i, r in enumerate(results):
         for key in ("initial", "equilibrated", "final", "snapshots",
                     "snapshot_sweeps", "energy", "accept_local",
-                    "accept_nonlocal", "scalars", "meta"):
+                    "accept_nonlocal", "scalars", "meta", "seed",
+                    "history_every", "history_sweeps"):
             if key in r["z"].files:
                 out[f"beta_{i}_{key}"] = r["z"][key]
     path = outdir / f"{backend.lower()}_{mode}.npz"

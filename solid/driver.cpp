@@ -13,6 +13,7 @@
 #include <chrono>
 #include <algorithm>
 #include <fstream>
+#include <cerrno>
 
 #ifndef SOLID_HAVE_METAL
 #define SOLID_HAVE_METAL 0
@@ -108,7 +109,10 @@ static std::vector<uint8_t> asBytes(const void* p, size_t n) {
   const uint8_t* q = (const uint8_t*)p; return std::vector<uint8_t>(q, q + n);
 }
 
-struct Hist { std::vector<float> energy, accLocal, accNonlocal; };
+struct Hist {
+  std::vector<float> energy, accLocal, accNonlocal;
+  uint64_t every = 1, sweeps = 0;
+};
 
 static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
                        uint64_t start, uint64_t count, uint64_t histStart,
@@ -127,11 +131,14 @@ static void cpuSegment(std::vector<Lattice>& lats, int chains, uint64_t seed,
         uint64_t sw = start + k;
         int an = (mode != 2) ? nonlocalSweep(lat, seed, c, sw, th, e) : 0;
         int al = (mode != 1) ? localSweep(lat, seed, c, sw, th, e) : 0;
-        uint64_t idx = uint64_t(c) * total + (sw - histStart);
         e = lat.energy();
-        hist.energy[idx] = float(e);
-        hist.accNonlocal[idx] = float(an) / float(lat.N);
-        hist.accLocal[idx] = float(al) / float(lat.N);
+        uint64_t elapsed = sw - histStart + 1;
+        if (total && (elapsed % hist.every == 0 || elapsed == hist.sweeps)) {
+          uint64_t idx = uint64_t(c) * total + (elapsed - 1) / hist.every;
+          hist.energy[idx] = float(e);
+          hist.accNonlocal[idx] = float(an) / float(lat.N);
+          hist.accLocal[idx] = float(al) / float(lat.N);
+        }
       }
     }
   });
@@ -191,8 +198,10 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
   uint32_t* ep = (uint32_t*)eh->contents();
   uint32_t* ap = (uint32_t*)al->contents();
   uint32_t* np = (uint32_t*)an->contents();
-  for (int ch = 0; ch < chains; ++ch) for (uint64_t j = 0; j < count; ++j) {
-    uint64_t idx = uint64_t(ch) * total + (start - histStart) + j;
+  if (total) for (int ch = 0; ch < chains; ++ch) for (uint64_t j = 0; j < count; ++j) {
+    uint64_t elapsed = start - histStart + j + 1;
+    if (elapsed % hist.every != 0 && elapsed != hist.sweeps) continue;
+    uint64_t idx = uint64_t(ch) * total + (elapsed - 1) / hist.every;
     hist.energy[idx] = float(ep[ch * count + j]);
     hist.accLocal[idx] = float(ap[ch * count + j]) / float(N);
     hist.accNonlocal[idx] = float(np[ch * count + j]) / float(N);
@@ -202,8 +211,8 @@ static void gpuSegment(GPU& gpu, MTL::Buffer* state, MTL::Buffer* thbuf,
 #endif
 
 int main(int argc, char** argv) {
-  if (argc < 9 || argc > 12) {
-    fprintf(stderr, "usage: %s L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU [both|nonlocal|local] [EQUIL_SWEEPS] [STATE_RAW]\n", argv[0]);
+  if (argc < 9) {
+    fprintf(stderr, "usage: %s L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU [both|nonlocal|local] [EQUIL_SWEEPS] [STATE_RAW] [--seed N] [--history-every N] [--max-history-samples N]\n", argv[0]);
     return 2;
   }
   int L = atoi(argv[1]);
@@ -213,10 +222,34 @@ int main(int argc, char** argv) {
   uint64_t sweeps = strtoull(argv[6], nullptr, 10);
   int cores = atoi(argv[7]);
   bool useGPU = std::string(argv[8]) == "GPU" || std::string(argv[8]) == "gpu" || std::string(argv[8]) == "1";
-  std::string modeStr = (argc >= 10) ? std::string(argv[9]) : "both";
+  uint64_t seed = 1, historyEvery = 1, maxHistorySamples = 100000;
+  std::vector<std::string> positional;
+  for (int i = 9; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg.compare(0, 2, "--") != 0) {
+      positional.push_back(arg);
+      continue;
+    }
+    if (arg != "--seed" && arg != "--history-every" && arg != "--max-history-samples") {
+      fprintf(stderr, "unknown option: %s\n", arg.c_str()); return 2;
+    }
+    if (++i == argc) { fprintf(stderr, "missing value for %s\n", arg.c_str()); return 2; }
+    char* end = nullptr;
+    errno = 0;
+    uint64_t value = strtoull(argv[i], &end, 10);
+    if (argv[i][0] == '-' || end == argv[i] || *end || errno == ERANGE ||
+        (arg != "--seed" && value == 0)) {
+      fprintf(stderr, "invalid value for %s: %s\n", arg.c_str(), argv[i]); return 2;
+    }
+    if (arg == "--seed") seed = value;
+    else if (arg == "--history-every") historyEvery = value;
+    else maxHistorySamples = value;
+  }
+  if (positional.size() > 3) { fprintf(stderr, "too many positional arguments\n"); return 2; }
+  std::string modeStr = positional.empty() ? "both" : positional[0];
   int mode = modeStr == "nonlocal" ? 1 : (modeStr == "local" ? 2 : 0);
-  uint64_t equil = (argc >= 11) ? strtoull(argv[10], nullptr, 10) : 0;
-  std::string statePath = (argc >= 12) ? std::string(argv[11]) : "";
+  uint64_t equil = positional.size() >= 2 ? strtoull(positional[1].c_str(), nullptr, 10) : 0;
+  std::string statePath = positional.size() >= 3 ? positional[2] : "";
 #if !SOLID_HAVE_METAL
   if (useGPU) {
     fprintf(stderr, "WARNING: Metal backend not built; using CPU\n");
@@ -237,7 +270,6 @@ int main(int argc, char** argv) {
   int nocc = n1 + n2;
   if (nocc <= 0) { fprintf(stderr, "empty occupied set\n"); return 2; }
 
-  const uint64_t seed = 1;
   std::vector<Lattice> lats(cores, Lattice(L));
   for (int c = 0; c < cores; ++c) lats[c].init(seed + uint64_t(c) * 0x9e3779b97f4a7c15ULL, n1, n2);
   if (!statePath.empty()) {
@@ -255,9 +287,16 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> equilibrated;
 
   std::vector<Threshold> th = makeThresholds(betaText);
-  Hist hist; hist.energy.assign(size_t(cores) * sweeps, 0.0f);
-  hist.accLocal.assign(size_t(cores) * sweeps, 0.0f);
-  hist.accNonlocal.assign(size_t(cores) * sweeps, 0.0f);
+  Hist hist;
+  hist.every = std::max(historyEvery, sweeps / maxHistorySamples + uint64_t(sweeps % maxHistorySamples != 0));
+  hist.sweeps = sweeps;
+  uint64_t samples = sweeps / hist.every + uint64_t(sweeps % hist.every != 0);
+  hist.energy.assign(size_t(cores) * samples, 0.0f);
+  hist.accLocal.assign(size_t(cores) * samples, 0.0f);
+  hist.accNonlocal.assign(size_t(cores) * samples, 0.0f);
+  std::vector<uint64_t> historySweeps(samples);
+  for (uint64_t i = 0; i < samples; ++i)
+    historySweeps[i] = i + 1 == samples ? sweeps : (i + 1) * hist.every;
 
   std::vector<std::vector<uint8_t>> snapshots;
   std::vector<uint64_t> snapSweeps;
@@ -306,25 +345,28 @@ int main(int argc, char** argv) {
 #endif
 
   auto runSeg = [&](uint64_t start, uint64_t count, uint64_t histStart, Hist& target, uint64_t total) {
-    if (!count) return;
+    // Bound temporary GPU histories too, including discarded equilibration output.
+    while (count) {
+      uint64_t chunk = std::min<uint64_t>(count, 4096);
 #if SOLID_HAVE_METAL
-    if (useGPU) {
-      gpuSegment(*gpu, gstate, gth, gpc, gnn, cores, seed, start, count, histStart, target, total, L, N, nocc, mode);
-      uint8_t* p = (uint8_t*)gstate->contents();
-      for (int c = 0; c < cores; ++c)
-        std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
-      return;
-    }
+      if (useGPU) {
+        gpuSegment(*gpu, gstate, gth, gpc, gnn, cores, seed, start, chunk, histStart, target, total, L, N, nocc, mode);
+        uint8_t* p = (uint8_t*)gstate->contents();
+        for (int c = 0; c < cores; ++c)
+          std::copy(p + size_t(c) * N, p + size_t(c + 1) * N, lats[c].st.begin());
+      } else
 #endif
-    cpuSegment(lats, cores, seed, start, count, histStart, th, target, total, nocc, mode);
+      {
+        cpuSegment(lats, cores, seed, start, chunk, histStart, th, target, total, nocc, mode);
+      }
+      start += chunk;
+      count -= chunk;
+    }
   };
 
   if (equil > 0) {
     Hist eqh;
-    eqh.energy.assign(size_t(cores) * equil, 0.0f);
-    eqh.accLocal.assign(size_t(cores) * equil, 0.0f);
-    eqh.accNonlocal.assign(size_t(cores) * equil, 0.0f);
-    runSeg(0, equil, 0, eqh, equil);
+    runSeg(0, equil, 0, eqh, 0);
   }
   equilibrated.assign(size_t(cores) * N, 0);
   for (int c = 0; c < cores; ++c)
@@ -335,7 +377,7 @@ int main(int argc, char** argv) {
   auto lastTimed = wall0;
   for (uint64_t b : planned) {
     if (b <= cur || b > sweeps) continue;
-    runSeg(equil + cur, b - cur, equil, hist, sweeps);
+    runSeg(equil + cur, b - cur, equil, hist, samples);
     cur = b;
     snapshot(cur);
   }
@@ -344,7 +386,7 @@ int main(int argc, char** argv) {
     const uint64_t chunk = 1024;
     while (cur < sweeps) {
       uint64_t n = std::min<uint64_t>(chunk, sweeps - cur);
-      runSeg(equil + cur, n, equil, hist, sweeps);
+      runSeg(equil + cur, n, equil, hist, samples);
       cur += n;
       auto now = std::chrono::steady_clock::now();
       if (std::chrono::duration<double>(now - lastTimed).count() >= 600.0) {
@@ -353,7 +395,7 @@ int main(int argc, char** argv) {
       }
     }
   } else if (cur < sweeps) {
-    runSeg(equil + cur, sweeps - cur, equil, hist, sweeps);
+    runSeg(equil + cur, sweeps - cur, equil, hist, samples);
     cur = sweeps;
   }
   std::vector<uint8_t> finalState(size_t(cores) * N);
@@ -375,12 +417,16 @@ int main(int argc, char** argv) {
     zipAdd(z, entries, "snapshots.npy", "<u1",
            {snapshots.size(), size_t(cores), size_t(N)}, all);
   }
-  zipAdd(z, entries, "energy.npy", "<f4", {size_t(cores), size_t(sweeps)},
+  zipAdd(z, entries, "energy.npy", "<f4", {size_t(cores), size_t(samples)},
          asBytes(hist.energy.data(), hist.energy.size() * 4));
-  zipAdd(z, entries, "accept_local.npy", "<f4", {size_t(cores), size_t(sweeps)},
+  zipAdd(z, entries, "accept_local.npy", "<f4", {size_t(cores), size_t(samples)},
          asBytes(hist.accLocal.data(), hist.accLocal.size() * 4));
-  zipAdd(z, entries, "accept_nonlocal.npy", "<f4", {size_t(cores), size_t(sweeps)},
+  zipAdd(z, entries, "accept_nonlocal.npy", "<f4", {size_t(cores), size_t(samples)},
          asBytes(hist.accNonlocal.data(), hist.accNonlocal.size() * 4));
+  zipAdd(z, entries, "history_sweeps.npy", "<u8", {historySweeps.size()},
+         asBytes(historySweeps.data(), historySweeps.size() * 8));
+  zipAdd(z, entries, "history_every.npy", "<u8", {1}, asBytes(&hist.every, sizeof(hist.every)));
+  zipAdd(z, entries, "seed.npy", "<u8", {1}, asBytes(&seed, sizeof(seed)));
   double scal[4] = {beta, rho, rho1, rho2};
   zipAdd(z, entries, "scalars.npy", "<f8", {4}, asBytes(scal, sizeof(scal)));
   uint64_t meta[5] = {(uint64_t)L, (uint64_t)cores, sweeps, (uint64_t)mode, equil};

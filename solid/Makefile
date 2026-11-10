@@ -27,8 +27,11 @@ all: driver
 driver: driver.cpp lattice.hpp sweeps_cpu.hpp efma.hpp kernels.metal
 	$(CXX) $(CXXFLAGS) driver.cpp -o $@ $(LDFLAGS)
 
-test: driver
+test: driver test-production
 	python3 check_correctness.py
+
+test-production: driver
+	python3 check_production.py
 
 test-long: driver
 	python3 check_correctness.py --long
@@ -36,4 +39,4 @@ test-long: driver
 clean:
 	rm -f driver run.npz
 
-.PHONY: all test test-long clean
+.PHONY: all test test-production test-long clean

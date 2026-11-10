@@ -4,6 +4,7 @@
 Backend contract: this script calls the C++/metal-cpp executable
 
     solid/driver L beta rho rho1 rho2 NUM_SWEEPS NUM_CORES CPU|GPU [mode] [equil]
+        [--seed U64] [--history-every U64] [--max-history-samples U64]
 
 where mode is both|nonlocal|local and equil is the number of equilibration sweeps
 before the production snapshot schedule. The C++ driver must support the
@@ -106,6 +107,23 @@ def parse_tau_nonlocal(s: str) -> tuple[float, float, float, float, float]:
     return tuple(v)  # type: ignore
 
 
+def parse_uint64(s: str) -> int:
+    try:
+        value = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an unsigned 64-bit integer") from None
+    if not 0 <= value <= (1 << 64) - 1:
+        raise argparse.ArgumentTypeError("must be an unsigned 64-bit integer")
+    return value
+
+
+def parse_positive_uint64(s: str) -> int:
+    value = parse_uint64(s)
+    if value == 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--betas", type=parse_csv, required=True, help="space/comma separated beta values")
@@ -131,7 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-parallel", type=int, default=1)
     p.add_argument("--skip-existing", action="store_true")
     p.add_argument("--estimate-only", action="store_true")
-    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--seed", type=parse_uint64, default=1)
+    p.add_argument("--history-every", type=parse_positive_uint64, default=1,
+                   help="requested interval between production history samples")
+    p.add_argument("--max-history-samples", type=parse_positive_uint64, default=100000,
+                   help="maximum production history samples per chain")
     return p
 
 
@@ -184,18 +206,44 @@ def plan_runs(args) -> list[dict]:
     return plan
 
 
+def matches_history_options(path: Path, args, sweeps: int) -> bool:
+    every = max(args.history_every,
+                (sweeps + args.max_history_samples - 1) // args.max_history_samples)
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            if not all(key in z.files for key in ("seed", "history_every", "history_sweeps")):
+                return False
+            if not np.array_equal(z["seed"], np.asarray([args.seed], dtype=np.uint64)):
+                return False
+            if not np.array_equal(z["history_every"], np.asarray([every], dtype=np.uint64)):
+                return False
+            history = z["history_sweeps"]
+            full, remainder = divmod(sweeps, every)
+            count = full + (remainder != 0)
+            if history.dtype != np.uint64 or history.shape != (count,):
+                return False
+            if full and (int(history[0]) != every or np.any(np.diff(history[:full]) != every)):
+                return False
+            return count == 0 or int(history[-1]) == sweeps
+    except (OSError, ValueError, KeyError):
+        return False
+
+
 def run_one(args, item: dict, root: Path) -> dict:
     beta = item["beta"]
     tag = f"beta_{beta:g}"
     wd = root / tag
     out_npz = wd / "run.npz"
     wd.mkdir(parents=True, exist_ok=True)
-    if args.skip_existing and out_npz.exists():
+    if (args.skip_existing and out_npz.exists()
+            and matches_history_options(out_npz, args, item["sweeps"])):
         return {**item, "npz": out_npz, "wall": 0.0, "status": "skipped"}
     cmd = [
         str(args.driver), str(args.L), f"{beta:.17g}", f"{args.rho:.17g}",
         f"{args.rho1:.17g}", f"{args.rho2:.17g}", str(item["sweeps"]),
         str(args.chains), args.backend, args.mode, str(item["equilibration"]),
+        "--seed", str(args.seed), "--history-every", str(args.history_every),
+        "--max-history-samples", str(args.max_history_samples),
     ]
     t0 = time.time()
     p = subprocess.run(cmd, cwd=wd, text=True, capture_output=True)
@@ -221,7 +269,8 @@ def aggregate(results: Sequence[dict], args) -> None:
         z = np.load(r["npz"])
         for key in ("initial", "equilibrated", "final", "snapshots",
                     "snapshot_sweeps", "energy", "accept_local",
-                    "accept_nonlocal", "scalars", "meta"):
+                    "accept_nonlocal", "scalars", "meta", "seed",
+                    "history_every", "history_sweeps"):
             if key in z.files:
                 out[f"beta_{i}_{key}"] = z[key]
     np.savez_compressed(args.output, **out)

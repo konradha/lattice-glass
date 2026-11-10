@@ -1,7 +1,8 @@
 # Solid backend contract
 
-This file freezes the CPU reference and the Metal fast kernel. A change to any item
-below changes the sampled chain. Re-run `make test` and `make test-long` after a change.
+This file defines the CPU reference, Metal fast kernel, and output contract.
+History sampling must not change the sampled chain. Re-run `make test` and
+`make test-long` after a change.
 
 ## State
 - One byte per site.
@@ -13,7 +14,7 @@ below changes the sampled chain. Re-run `make test` and `make test-long` after a
 - Type 1 target coordination is 3. Type 2 target coordination is 5.
 - Site energy is 0 for a vacant site. Otherwise it is `(count - target)^2`.
 - Total energy is the sum over all sites.
-- `energy.npy` stores total energy after every sweep. It is not incremental.
+- `energy.npy` stores total energy at the production sweeps in `history_sweeps.npy`.
 
 ## RNG and index sampling
 - Counter-based SplitMix64 word stream keyed by `(seed, chain, proposal index, mode)`.
@@ -22,6 +23,8 @@ below changes the sampled chain. Re-run `make test` and `make test-long` after a
 - Nonlocal sweep `s` uses indices `(2*s)*N ... (2*s)*N + N - 1`.
 - Local sweep `s` uses indices `(2*s+1)*N ... (2*s+1)*N + N - 1`.
 - Mode `both` runs nonlocal then local for the same sweep number.
+- Driver `--seed` defaults to 1 and controls both initialization and proposals.
+  Use distinct seeds for independent batches. The exact uint64 seed is saved.
 - Site, partner, and direction use exact Lemire rejection:
   `i = mulhi(R, n)`, reject while `low32(R*n) < (2^32 mod n)`.
 - No floating-point index conversion is permitted.
@@ -57,16 +60,29 @@ distance 2 of an earlier accepted endpoint in the same round.
 - After a cut, unchanged suffix proposals are drawn again from the same indices.
 
 ## Scheduling and output
-- A segment runs one Metal dispatch. There is no host synchronization per sweep.
+- Execution uses at most 4096 sweeps per Metal dispatch, including equilibration.
+  There is no host synchronization per sweep.
 - Snapshots occur at planned sweep boundaries. Planned boundaries are powers of
 two through the requested sweep count.
 - The driver copies state after a segment, then the host writes snapshots.
 - CPU recomputes total energy after every sweep.
 - GPU accumulates accepted deltas with a warp reduction after every round, then
 writes total energy after every sweep. Initial GPU energy is a warp reduction.
+- `--history-every` defaults to 1; `--max-history-samples` defaults to 100000.
+  Both must be positive. The effective interval is
+  `max(history_every, ceil(production_sweeps / max_history_samples))`.
+- Store energy and both acceptance fractions at positive interval multiples and
+  at the final production sweep. Zero production sweeps produces empty histories.
+- History arrays have shape `(chains, samples)`. `history_sweeps` contains the
+  one-based production-relative timestamps. `history_every` and `seed` each have
+  shape `(1,)`, dtype uint64. The existing five-element `meta` is unchanged.
+- Equilibration histories are discarded; GPU temporary histories are bounded by
+  the dispatch chunk size. Sampling and chunk boundaries do not change RNG indices.
 
 ## Verification
 - `make test`: short CPU/GPU bitwise cases for L4 and L21, all modes.
 - `make test-long`: adds L21, 1000 sweeps, 8 chains, nonlocal and local.
+- `make test-production`: CPU-only seed replay and history-sampling regressions.
 - Compared fields: initial, equilibrated, final, snapshot sweeps, snapshots,
-energy, local acceptance, nonlocal acceptance, scalars, and metadata.
+energy, local acceptance, nonlocal acceptance, scalars, metadata, seed, history
+interval, and history sweep timestamps.

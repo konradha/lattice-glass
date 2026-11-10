@@ -17,6 +17,7 @@ DRIVER = os.path.join(ROOT, "driver")
 KEYS = [
     "initial", "equilibrated", "final", "snapshot_sweeps", "snapshots",
     "energy", "accept_local", "accept_nonlocal", "scalars", "meta",
+    "seed", "history_every", "history_sweeps",
 ]
 
 
