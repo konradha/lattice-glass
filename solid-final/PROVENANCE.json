@@ -1,0 +1,52 @@
+{
+  "schema": "solid-final.provenance.v1",
+  "repository": "https://github.com/konradha/lattice-glass",
+  "target_branch": "clean-solid",
+  "source_snapshots": {
+    "upstream_cpu_and_apple": "eaef7d4",
+    "opt3_research": "48e5e53",
+    "original_opt3_frozen": "e9ead63"
+  },
+  "selection_manifests": ["cpu/selection.json", "metal/selection.json", "cuda/selection.json"],
+  "readable_original_research": ["research/REPORT.md", "research/PROOFS.md", "research/NOTES.md", "research/results.tsv", "research/STATUS.md"],
+  "frozen_common_headers_sha256": {
+    "common/lattice.hpp": "2aeaeb24ae4a7b407007e9f263839bdaa29e5f1fc0ca3c2fbc435c97289c9150",
+    "common/sweeps_cpu.hpp": "e79be5eb8c92d013f13e6f4065da2f9650cbfb90fc584e7fd355cfe5ece5aa34",
+    "common/efma.hpp": "7bb85370e530fd0e85e217462457b2114a6cd6b59a6ffbc0549e8a9f1665629c"
+  },
+  "scientific_decisions": {
+    "authority": "Frozen upstream CPU code, not older README descriptions",
+    "rng": "CounterSplitMix64 and exact Lemire draws, unchanged",
+    "acceptance": "Host-precomputed 64-bit EFMA thresholds; no exponential in proposal hot paths",
+    "proposal_units": "L^3 attempts per physical local/nonlocal sweep, counting invalid draws, no-ops and rejections",
+    "physical_local_default": true,
+    "colored_metal": "Explicit local-colored only; different trajectory and physical clock, never silently substituted",
+    "beta_zero": "Not advertised: inherited EFMA beta=0 edge remains outside supported public beta>0 range",
+    "equilibrium": "Configured burn-in is not a measured tau or equilibration guarantee",
+    "paper_recipe": "Historical rounded ladder and sweep counts from solid/fold_campaign.py; 16384 nonlocal and 32 local chains, not a newly executed campaign"
+  },
+  "packaging_verification": {
+    "scope": "New launcher/format/archive handling only; no scientific execution",
+    "syntax_parsed_python_files": 7,
+    "kernel_source_hash_equality": "All three selected CUDA and both Metal kernels match their original source bytes",
+    "cli": "Help, native command dry-runs across CPU/Metal/CUDA, explicit colored selection, full-u64 seed, historical campaign plan, physical-replica plan from existing GPU NPZ, aging estimate-only",
+    "saved_data": "Existing GPU NPZ read, partial-segment snapshot repair, history boundary planning, configuration/seed NPY export and local NPY inspection passed in temporary directories",
+    "modal_admission": "Pure admission/config functions checked without importing Modal SDK: zero budget and unsupported beta rejected before materialization",
+    "archive": "Full new archive integrity receipt in benchmarks/integrity.json; extraction of real CPU measurement JSON and upstream scale CSV reproduced original SHA256s",
+    "builds": 0,
+    "simulations": 0,
+    "benchmarks": 0,
+    "scientific_suite_reruns": 0,
+    "modal_calls": 0,
+    "qualification_limit": "Original source qualifications are recorded with their original scope. Newly relocated/adapted host executables were not compiled, executed, timed or requalified. H100/L4 runtime qualification is not inferred."
+  },
+  "evidence_archive": {
+    "manifest": "benchmarks/manifest.json",
+    "index": "benchmarks/INDEX.txt",
+    "format": "56 independently readable tar.xz parts with original-path and SHA256 chunk mappings",
+    "archive_bytes": 416396748,
+    "preserved_source_records": 470650,
+    "excluded_source_records": 4802,
+    "exclusions": "Explicit hashed exclusions; binaries/caches/locks/transport wrappers and bulk nonbenchmark trajectories are not silently substituted for benchmark evidence"
+  }
+}

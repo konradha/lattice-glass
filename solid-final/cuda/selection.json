@@ -1,0 +1,204 @@
+{
+  "schema": "solid-final.cuda.selection.v1",
+  "origin_worktree": "/home/fritz/code/lattice-glass-solid-opt3",
+  "origin_package": "solid-opt3",
+  "origin_handoff_commit": "48e5e53",
+  "historical_selected_commits": [
+    "c0d8e69",
+    "e9ead63"
+  ],
+  "launch": {
+    "window": 256,
+    "threads": 256,
+    "proposals_per_thread": 1,
+    "profile": false
+  },
+  "architectures": [
+    "sm_80",
+    "sm_89",
+    "sm_90"
+  ],
+  "fast_math": false,
+  "packaging_inputs_sha256": {
+    "../modal_app.py": "643ffa7003444c370eb1216b84540170927c63fe1fac368944c57f83884cb70f",
+    "Makefile": "42578db7e1c81abee74c0cff521b6d2b46507bb563a4988f11befdad66117eda",
+    "../common/lattice.hpp": "2aeaeb24ae4a7b407007e9f263839bdaa29e5f1fc0ca3c2fbc435c97289c9150",
+    "../common/sweeps_cpu.hpp": "e79be5eb8c92d013f13e6f4065da2f9650cbfb90fc584e7fd355cfe5ece5aa34",
+    "../common/efma.hpp": "7bb85370e530fd0e85e217462457b2114a6cd6b59a6ffbc0549e8a9f1665629c"
+  },
+  "native_interface": {
+    "output": "run.npz plus run.tsv in current working directory",
+    "continuation": "STATE_RAW plus explicit --seed and --start-sweep; NPZ start_sweep/next_sweep retained",
+    "history": "--history-every N --max-history-samples N; sweeps internally chunked to at most 4096",
+    "sizes": "4 <= L <= 21; no fallback for unavailable CUDA"
+  },
+  "modal_interface": {
+    "entrypoint": "modal run solid-final/modal_app.py --budget-usd 5 --config campaign.json --gpu L40S --preset depth --seconds 600",
+    "resume": "Repeat original settings/cap with --resume-id ID --ledger FILE; retain cumulative per-run local ledger",
+    "download": "modal volume get lattice-solid-final-runs ID ./download",
+    "campaign_api": "campaign.execute_campaign(config, backend, native_driver, output_dir, max_wall_seconds, resume, commit_hook)",
+    "config_validation": "Parent campaign.normalize_config runs before budget reservation or image creation; additionally CUDA physical-only modes, L4..21 and chunk_sweeps<=4096 are required.",
+    "durability": "commit_hook=runs.commit publishes chunk/checkpoint manifests before checkpoint reclamation",
+    "bounds": "seconds 1..3600; 900s CPU build; 120s queue/start acknowledgement; 60s startup timeout; 60s work headroom; retries=0, warm/buffer=0, minimum Modal scaledown=2s",
+    "budget": "Explicit positive cumulative cap admitted before image/volume definitions; full per-attempt image/build/GPU conservative reservation retained on failure. Resource estimates are not provider invoices or an account-level spending cap.",
+    "dependencies": "Python stdlib, Modal, numpy 2.2.6; pinned CUDA image, build-essential, Boost 1.83",
+    "preset_auto": "A100-40GB -> ampere; L4/L40S/H100 -> depth; throughput is explicit"
+  },
+  "components": {
+    "fast_empty_window.cu": {
+      "origin_path": "solid-opt3/cuda/fast_empty_window.cu",
+      "origin_sha256": "abb6134b73819ca3045101f119c6776732d1bbf1d8f48aa908fc334450b60268",
+      "packaged_sha256": "abb6134b73819ca3045101f119c6776732d1bbf1d8f48aa908fc334450b60268",
+      "adaptation": "none"
+    },
+    "packed_type_commit.cu": {
+      "origin_path": "solid-opt3/cuda/packed_type_commit.cu",
+      "origin_sha256": "c4b3b3df75daf1d232122e17937fda0a8b21c84ad4168a8f48032a5599bafc21",
+      "packaged_sha256": "c4b3b3df75daf1d232122e17937fda0a8b21c84ad4168a8f48032a5599bafc21",
+      "adaptation": "none"
+    },
+    "packed_fast_empty.cu": {
+      "origin_path": "solid-opt3/cuda/packed_fast_empty.cu",
+      "origin_sha256": "78ad1aceef4bb2bcfcb40d4d78aca6b47885af00ec2c377aac335fcac247932a",
+      "packaged_sha256": "78ad1aceef4bb2bcfcb40d4d78aca6b47885af00ec2c377aac335fcac247932a",
+      "adaptation": "none"
+    },
+    "backend.hpp": {
+      "origin_path": "solid-opt3/cuda/backend.hpp",
+      "origin_sha256": "753380f680db3d2291cc760588a48c327eee6ba32ffce2ad4aa90e353c411884",
+      "packaged_sha256": "b5b4237717ab8e10e62cd294255792ef6c100aefd1af95d661fb1bb4de52abfb",
+      "adaptation": "include paths only"
+    },
+    "driver.cpp": {
+      "origin_path": "solid-opt3/cuda/driver.cpp",
+      "origin_sha256": "89ad7df8cd91c38205165817df4ad7bb617f8f1c639ce25ab07ff391804b8934",
+      "packaged_sha256": "175ce45ef177267c473e0f7761de71f8d890182678ed9812e09015947ca01fbd",
+      "adaptation": "include paths only"
+    },
+    "check.cpp": {
+      "origin_path": "solid-opt3/gate/check.cpp",
+      "origin_sha256": "61b456c96bf68a58b008c7d8a1daec8e482f7358428bb24b8909b8753a013d9b",
+      "packaged_sha256": "d8f326a5a1cac7a248b9a5aef9a77981ba58cc81e582ca933b5fe7306d198689",
+      "adaptation": "include paths only"
+    }
+  },
+  "presets": {
+    "depth": {
+      "source": "fast_empty_window.cu",
+      "executable": "driver-depth",
+      "gpu_measured": "L40S",
+      "receipt": "solid-opt3/artifacts/receipts/bcb0075d40664e588f9435232fc4653d.json",
+      "receipt_sha256": "4fff52a7430e4756ad1385a01400cf03ac668c6f3972875d43457c389b866d54",
+      "historical_native_digest": "8020c79afcbb7af5d82234c89a6e458fa95d5b43493fe0ff5c3a9774636481e8",
+      "qualification": "selected L40S W256/T256/PPT1 exact ladder and all3 sanitizers passed before four-repeat timing; broader scopes unverified",
+      "L": 21,
+      "beta": "3.2",
+      "single_chain_M_attempts_s": {
+        "local": 169.671703,
+        "nonlocal": 207.955519
+      },
+      "per_chain_at142_M_attempts_s": {
+        "local": 142.068618,
+        "nonlocal": 197.339042
+      },
+      "summary": "solid-opt3/artifacts/C07-unitSM-summary.json",
+      "limits": [
+        "all other launch shapes",
+        "profile paths",
+        "held-out L40S100M",
+        "other GPU models"
+      ]
+    },
+    "throughput": {
+      "source": "packed_type_commit.cu",
+      "executable": "driver-throughput",
+      "gpu_measured": "L40S",
+      "receipt": "solid-opt3/artifacts/receipts/562e53f4ccd74420b5b08ae2fa14fc5b.json",
+      "receipt_sha256": "b9c281018c37781dc930e99a8b1791b57b00e688cc039ca65f62b4e383949aa7",
+      "historical_native_digest": "58e15c455fcbef643682e68f3b43e631a26be8e0ad7e17ab91d1badd8dc91303",
+      "qualification": "tested_selected_not_universally_promoted",
+      "L": 21,
+      "beta": "3.2",
+      "rates": [
+        {
+          "move": "local",
+          "chains": 1,
+          "median_per_chain_Ms": 133.627679765,
+          "median_card_Gs": 0.13362768
+        },
+        {
+          "move": "nonlocal",
+          "chains": 1,
+          "median_per_chain_Ms": 161.449222431,
+          "median_card_Gs": 0.161449222
+        },
+        {
+          "move": "local",
+          "chains": 284,
+          "median_per_chain_Ms": 102.708630918,
+          "median_card_Gs": 29.169251181
+        },
+        {
+          "move": "nonlocal",
+          "chains": 284,
+          "median_per_chain_Ms": 129.869240015,
+          "median_card_Gs": 36.882864164
+        },
+        {
+          "move": "local",
+          "chains": 568,
+          "median_per_chain_Ms": 70.349728527,
+          "median_card_Gs": 39.958645803
+        },
+        {
+          "move": "nonlocal",
+          "chains": 568,
+          "median_per_chain_Ms": 82.138201432,
+          "median_card_Gs": 46.654498413
+        },
+        {
+          "move": "local",
+          "chains": 1136,
+          "median_per_chain_Ms": 35.949848708,
+          "median_card_Gs": 40.839028132
+        },
+        {
+          "move": "nonlocal",
+          "chains": 1136,
+          "median_per_chain_Ms": 42.586951932,
+          "median_card_Gs": 48.378777395
+        }
+      ],
+      "summary": "solid-opt3/artifacts/C02-ranking-summary.json",
+      "limits": "Historical receipt source/flags/binary only. No all-fourteen-shape, profile-path, other-GPU or universal promotion claim. Instrumented/incomplete repeats are not ordinary timing."
+    },
+    "ampere": {
+      "source": "packed_fast_empty.cu",
+      "executable": "driver-ampere",
+      "gpu_measured": "A100-40GB",
+      "receipt": "solid-opt3/artifacts/receipts/0e81177be78643e1a82985e7e60dc8d4.json",
+      "receipt_sha256": "cddbc74bb77034f8baceb2f7902fa61e633addb7e713a6d19e8217fbf314db0c",
+      "historical_native_digest": "5e323f37ca6cf5e31f254b32ce69baf97e09a45dd40a2cf61ec5624b1c6afa4e",
+      "qualification": "Actual parent receipt0e81177be78643e1a82985e7e60dc8d4 qualifies only the explicitly recorded A100 selected shape; broader shape/profile/card coverage is not inferred.",
+      "L": 21,
+      "beta": "3.2",
+      "single_chain_M_attempts_s": {
+        "local": 95.556175,
+        "nonlocal": 116.816217
+      },
+      "summary": "solid-opt3/artifacts/C08-A100-final-summary.json",
+      "limits": [
+        "all other launch shapes",
+        "profile paths",
+        "other GPU models"
+      ]
+    }
+  },
+  "limits": [
+    "Selected .cu files copied byte-for-byte from the opt3 worktree; host/interface/checker include paths relocated to ../common.",
+    "Shared driver is the current adaptive/bounded opt3 host, not the historical measured host binary.",
+    "The relocated package and combined sm80/89/90 binary have not been built, run, gated, or benchmarked. Historical receipts qualify only their original source/flags/binaries and stated scope.",
+    "No H100 or L4 runtime qualification or rate claim. H100/L4 are executable deployment choices only.",
+    "All rates count attempted proposals including invalid and no-op attempts; no equilibrium or complete long-campaign claim."
+  ]
+}

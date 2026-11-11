@@ -1,0 +1,21 @@
+{
+  "schema": "solid-final.benchmark-integrity.v2",
+  "method": "One complete sequential read of every new tar.xz member, validating USTAR parsing, XZ stream integrity through EOF, and each original object SHA256 plus size. Exact member sets/counts are compared with the previously verified ZIP object inventory; archive files are also SHA256-hashed. No scientific execution.",
+  "passed": true,
+  "archive_format": "USTAR + XZ/LZMA2 preset 1",
+  "archive_parts": 56,
+  "archive_bytes": 416396748,
+  "max_archive_part_bytes": 44429388,
+  "verified_members": 426687,
+  "verified_uncompressed_object_bytes": 7802858718,
+  "elapsed_seconds": 38.72,
+  "recompression": {
+    "previous_zip_bytes": 932592639,
+    "new_tar_xz_bytes": 416396748,
+    "bytes_saved": 516195891,
+    "percent_smaller": 55.3506,
+    "source_records_unchanged": 470650,
+    "source_and_chunk_sha256_values_preserved": true,
+    "previous_zip_content_integrity_passed": true
+  }
+}

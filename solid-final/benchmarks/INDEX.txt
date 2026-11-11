@@ -1,0 +1,61 @@
+SOLID-FINAL: LOCAL BENCHMARK EVIDENCE ARCHIVE
+
+Actual observed receipts, not a summary-only export. No experiments, builds,
+simulations, scientific checks or Modal calls were run during packaging.
+
+Contents
+- evidence-001.tar.xz through evidence-056.tar.xz: 416,396,748 bytes total.
+  Largest part: 44,429,388 bytes; all are independently readable tar.xz parts.
+  USTAR + solid XZ/LZMA2 preset 1, using builtin Python tarfile/lzma.
+  Recompressed from 932,592,639 ZIP bytes without dropping any source/object:
+  516,195,891 bytes saved (55.3506%). Old generated ZIPs were removed only
+  after the complete new-artifact integrity pass succeeded.
+- manifest.json: source roots, archive/manifest SHA256s, totals and layout.
+- files-001.jsonl.gz through files-020.jsonl.gz: 470,650 preserved source
+  records with original relative paths, observed sizes, SHA256s and exact
+  ordered tar.xz part/member mappings. 22,304,035,849 source bytes include
+  duplicate receipts/SASS and members expanded from original transport ZIPs.
+- exclusions.jsonl: 4,802 explicit exclusions, each with original path,
+  actual SHA256, size and reason. The excluded-source byte total is
+  8,237,546,436; transport wrappers and their nested members are counted
+  separately, so this is not a physical disk-space savings estimate.
+- integrity.json: one complete new-tar.xz integrity pass passed: 426,687
+  objects, 7,802,858,718 uncompressed unique object bytes; XZ stream integrity,
+  exact member sets, SHA256 and size validated. Original source/chunk hashes
+  are unchanged. Archive hashes are recorded in manifest.json.
+- extract.py: reconstructs one original file and checks its full SHA256.
+
+Preserved
+Main artifacts/, experiments/ (including all CPU campaign logs/results.tsv,
+budget ledger, proof-cache receipts and sanitizer evidence), native solid-opt
+and solid-opt2 source/report/config snapshots and scale.csv; opt3 results.tsv,
+REPORT/NOTES/PROOFS/STATUS, configs, proofs, native sources, budget/receipts,
+qualification/failure logs, compiler/SASS/nvdisasm/Nsight-related evidence,
+production diagnostics/manifests and small probe/resume qualification arrays.
+Repeated bytes are shared without dropping original-path provenance. Failed,
+refused, interrupted and incomplete observations remain failures as recorded.
+
+Not preserved
+Executable/object/cubin binaries, interpreter/build caches, transient locks,
+original transport ZIP wrapper bytes (their allowed members are separately
+preserved), and bulk NPZ/raw trajectories/checkpoints under cpu-relaxation-*,
+final-campaign-600, followup-shutdown-pilot, pilot-baseline-4096 and
+pilot-low-600. Their timing/diagnostic/config/proof records remain. Exclusions
+are individually enumerated, not hidden. Main profiling/ contained only cache
+files. Credentials were screened by filename and token patterns; no matching
+secret material was found. This is pattern screening, not a universal guarantee.
+Unrelated directories and .git/virtualenv data were outside archive scope.
+
+Examples (run from repository root)
+python3 solid-final/benchmarks/extract.py --root main --path solid-opt2/bench/scale.csv --output /tmp/scale.csv
+python3 solid-final/benchmarks/extract.py --root opt3 --path solid-opt3/artifacts/cpu-type-fast-measured.json --output /tmp/cpu-measured.json
+python3 solid-final/benchmarks/extract.py --root opt3 --path solid-opt3/artifacts/final-evidence-index.json --output /tmp/final-evidence-index.json
+
+Source roots are main=/home/fritz/code/lattice-glass and
+opt3=/home/fritz/code/lattice-glass-solid-opt3. Nested original ZIP members use
+<original-wrapper-path>!/<member> in file records. Tar objects are SHA256-named;
+concatenate a source record's ordered chunks to reproduce its exact bytes.
+Each part can also be opened with tar -xJf or Python tarfile/lzma independently.
+Restoring a chunked source requires the parts listed in that source's record.
+All metadata is machine-readable without executing any scientific software.
+Recorded qualification does not certify newly packaged solid-final binaries.

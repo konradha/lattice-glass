@@ -1,0 +1,109 @@
+{
+  "schema": "solid-final.cpu-selection.v1",
+  "packaging_only": true,
+  "packaged_binary_gate_rerun": false,
+  "builds_tests_benchmarks_simulations_run": [],
+  "clean_solid_source_commit": "eaef7d4",
+  "opt3_source_commit": "48e5e53",
+  "opt3_commit_note": "Research opt/solid-opt3-followup HEAD reported by integration owner. Cached algorithm predates followup (frozen opt/solid-opt3 e9ead63); exact original file SHA256s below are authoritative.",
+  "archived_evidence": {
+    "manifest": "../benchmarks/manifest.json",
+    "extractor": "../benchmarks/extract.py",
+    "sources": [
+      {"source_root": "main", "path": "solid-opt2/bench/scale.csv"},
+      {"source_root": "main", "path": "solid-opt2/cpu/Makefile"},
+      {"source_root": "opt3", "path": "solid-opt3/artifacts/cpu-type-fast-measured.json"},
+      {"source_root": "opt3", "path": "solid-opt3/REPORT.md"}
+    ],
+    "resolution": "Use the manifest source records and bundled extractor to resolve original source_root/path to archive parts/members and verify SHA256."
+  },
+  "origins": {
+    "apple_driver": {
+      "path": "solid-opt2/cpu/driver.cpp",
+      "sha256": "f1763aea9e443428110750bd9d7179906577de5682bdc21877318614a046d91b"
+    },
+    "apple_makefile": {
+      "path": "solid-opt2/cpu/Makefile",
+      "sha256": "e5bfb1a868f34e5a3f623334321cd412369e4d06a68a09f3ff7172fdfba82316"
+    },
+    "cached_algorithm": {
+      "path": "/home/fritz/code/lattice-glass-solid-opt3/solid-opt3/cpu/fast.cpp",
+      "sha256": "dea7e48c0e3277ada42a4ba56f7f4790c7e2b7554fadd837bcc0c5732323b920"
+    },
+    "production_host": {
+      "path": "/home/fritz/code/lattice-glass-solid-opt3/solid-opt3/cuda/driver.cpp",
+      "sha256": "89ad7df8cd91c38205165817df4ad7bb617f8f1c639ce25ab07ff391804b8934"
+    },
+    "opt3_makefile": {
+      "path": "/home/fritz/code/lattice-glass-solid-opt3/solid-opt3/Makefile",
+      "sha256": "1faff350f2f1f7826061da1fb39e495528577d353251ebf733fbfa9593b9c6c6"
+    },
+    "apple_rates": {
+      "path": "solid-opt2/bench/scale.csv",
+      "sha256": "c4ef519b45d04eeb3862da019d4b329f7c20ea5c222cf1567bd9c23d6d3bcf75"
+    },
+    "nonapple_rates": {
+      "path": "/home/fritz/code/lattice-glass-solid-opt3/solid-opt3/artifacts/cpu-type-fast-measured.json",
+      "sha256": "8f7d4e0022007fb47a59ba2274faa048d3bc55f8a5574794073f1131be55414a"
+    }
+  },
+  "platforms": {
+    "Darwin": {
+      "algorithm": "Frozen opt2 physical CPU sweeps (nonlocalSweep/localSweep)",
+      "macro": "SOLID_CPU_CACHED=0",
+      "build_flags": "-O2 -march=native -mtune=native -funroll-loops -fomit-frame-pointer -fno-math-errno -fno-trapping-math -fno-signed-zeros -DNDEBUG -std=c++17 -pthread",
+      "evidence": "solid-opt2/bench/scale.csv",
+      "evidence_context": {
+        "L": 21,
+        "beta": "2.0",
+        "seed": "1",
+        "timed_sweeps": 1000,
+        "warmup_sweeps": 200,
+        "chains": 8,
+        "local_aggregate_attempts_s": 132774193.548387,
+        "nonlocal_aggregate_attempts_s": 202426229.508197,
+        "local_per_chain_attempts_s": 16596774.193548,
+        "nonlocal_per_chain_attempts_s": 25303278.688525
+      },
+      "scope": "Historical opt2 production driver rates, not opt3 kernel-only rates. Current opt2 driver starts wall0 after equilibration and reports elapsed after NPZ close, so it includes snapshot and NPZ work; old bench README says otherwise. No Apple Fast<K> performance claim."
+    },
+    "non-Darwin": {
+      "algorithm": "opt3 Fast<true> K cache with occupied-type fast path",
+      "macro": "SOLID_CPU_CACHED=1",
+      "build_flags": "-O3 -march=native -mtune=native -std=c++17 -pthread",
+      "old_evidence_build_input_hash": "3e26cc3be810ccad8fefbc34df3a5c7214f19464f2b3b404d5b698d75b34c394",
+      "old_hash_scope": "cpu/Makefile.fast hashes concatenated fast.cpp, frozen headers, Makefile.fast, and compiler/flags. It is not the single-file SHA256 of fast.cpp; that is recorded under origins.cached_algorithm.",
+      "evidence": "solid-opt3/artifacts/cpu-type-fast-measured.json (research checkout original)",
+      "evidence_context": {
+        "L": 21,
+        "beta": "3.2",
+        "seed": "15637821895788547078",
+        "chain": 0,
+        "pinned_cpu": 1,
+        "warmup_sweeps": 8192,
+        "requested_timed_seconds": 10,
+        "local_attempts_s": 47899627.54524707,
+        "nonlocal_attempts_s": 51113402.556800164
+      },
+      "scope": "Historical kernel-only steady_clock including sweep timer checks; excludes initialization, thresholds, warmup, byte export, NPZ. Timed work differs by run. Not fixed-work A/B/B/A, no clock/cycle measurement, historical development seed, not a held-out key. Packaged production host is newly adapted and has not been built, gated, or measured.",
+      "old_oracle_receipt": "artifact://869; REPORT.md:143-159 records full frozen-oracle matrix ok:true; not rerun",
+      "old_benchmark_receipt": "artifact://872"
+    }
+  },
+  "implementation": {
+    "driver": "cpu/driver.cpp",
+    "cached_kernel": "cpu/fast.hpp",
+    "kernel_copy": "opt3 cpu/fast.cpp lines 19..200 copied verbatim into fast.hpp; namespace closer and required includes added. Standalone benchmark/check main is not packaged.",
+    "host_origin": "opt3 cuda/driver.cpp standalone segment, parsing, raw-state validation, NPZ I/O; stored ZIP writer from opt2 cpu/driver.cpp. GPU, batch campaign, and benchmark-specific code omitted.",
+    "apple_hot_path": "Calls unchanged frozen common/sweeps_cpu.hpp functions with exact energy held across segments; no exp or full energy scan in proposal/sweep loop.",
+    "nonapple_hot_path": "One persistent Fast<true> per chain and frozen geometry; draw64/indexAt preserve uint64 modulo proposal arithmetic. No allocation, byte reconstruction, or exp per attempt. Canonical bytes rebuilt only at segment boundaries.",
+    "ordering": "For both mode: N nonlocal proposals then N physical random-nearest-neighbor local proposals for each absolute sweep; chain ids are zero-based row indices.",
+    "abi": "driver L beta rho rho1 rho2 SWEEPS CHAINS CPU MODE EQUIL [STATE_RAW] --seed U64 --start-sweep U64 --history-every N --max-history-samples N",
+    "resume": "Pass prior final canonical chain-major uint8 bytes as STATE_RAW, identical L/chains/beta/mode/seed, EQUIL=0, --start-sweep=prior next_sweep. Proposal arithmetic intentionally retains frozen modulo-u64 behavior; exported next_sweep must not overflow u64.",
+    "output": "run.npz; preserves initial/equilibrated/final, snapshots, relative history_sweeps, float energy/acceptance, scalars/meta/seed. Adds exact energy_int/accept_*_count, history_sweeps_absolute, start_sweep/next_sweep, beta_text, cpu_backend, source_hash.",
+    "bounds": "L=4..21; positive chains; no GPU fallback. Histories retain <=max-history-samples samples per chain including final sweep; segment scratch <=4096 sweeps per chain. Snapshots at powers of two plus final (<=65), independent of wall time. Stored ZIP rejects >4GiB instead of truncating.",
+    "dependencies": "C++17 compiler, pthreads, header-only Boost.Multiprecision; Makefile detects /opt/homebrew/include, /usr/local/include, /usr/include; override BOOST_INC or CPPFLAGS. Install brew boost or Debian/Ubuntu libboost-dev. No Boost library link. Native ISA build requires running on compatible CPU.",
+    "build": "make -C solid-final/cpu emits cpu/driver; Darwin uses opt2 O2/native, other POSIX systems opt3 K O3/native. No PGO/training/test/simulation targets."
+  },
+  "qualification": "Existing scientific kernels and old evidence have been packaged, not rerun. No performance or correctness claim is made for a newly compiled packaged executable."
+}

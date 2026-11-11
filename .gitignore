@@ -6,3 +6,4 @@ solid/cuda_fixtures.bin
 **/__pycache__/
 .modal_cuda_budget.json*
 modal_cuda_results/
+.solid-final-*.ledger.json*

@@ -1,0 +1,3 @@
+numpy>=1.24
+# Optional for Modal launches: pip install modal
+# Optional for runners/plot_paper.py: pip install matplotlib

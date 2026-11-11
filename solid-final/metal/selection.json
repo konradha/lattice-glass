@@ -1,0 +1,109 @@
+{
+  "schema": "solid-final.metal-selection.v1",
+  "source_repository": "lattice-glass",
+  "source_snapshot_commit": "eaef7d4",
+  "packaged_binaries_executed": false,
+  "selection": {
+    "nonlocal": "driver_persistent",
+    "physical_local": "driver_physical",
+    "physical_both": "driver_physical",
+    "optional_nonphysical_local": "driver_persistent MODE=local-colored",
+    "rationale": "Keep opt2's proven persistent exact nonlocal engine and the old opt physical random-edge engine. The opt2 L21 local throughput is colored-local, never physical-local. These selections do not assert dominance for every chain count: the old README reports about 467M nonlocal attempts/s at 128 chains versus 436.8M in the opt2 CSV. No packaged binary has been benchmarked or gated."
+  },
+  "sources": {
+    "driver_persistent.cpp": {
+      "origin": "solid-opt2/metal/driver.cpp",
+      "origin_sha256": "fae0fbd6e319b981070a3d83c06e78cb7cd436150beb8f8e4e83b1f6ed851e47",
+      "packaged_sha256": "a3a3a73979fb6226cfcc847e41be126e5d4ec476cb50302ace14210f46d64c8f"
+    },
+    "kernels_persistent.metal": {
+      "origin": "solid-opt2/metal/kernels.metal",
+      "origin_and_packaged_sha256": "2392a12601fa97d741bba072eb659f86f5d12c423294e8e05fdba65865f4635f",
+      "byte_identical": true,
+      "entry_point": "run_persistent",
+      "threads_per_chain": 128
+    },
+    "driver_physical.cpp": {
+      "origin": "solid-opt/metal/driver.cpp",
+      "origin_sha256": "fd5e96b7ac1feffebfc0a14ec78a1173de5121dbd1829bad98e84cbe61b6804b",
+      "packaged_sha256": "0a4f34ff02ed7b2fbb1fee8cc9c7de01742899095667e7dcd098df4a4e7ee1ab"
+    },
+    "kernels_physical.metal": {
+      "origin": "solid-opt/metal/kernels.metal",
+      "origin_and_packaged_sha256": "c0165fcba92a781793ff01dc253cd020fd4d0e40f0f4ca7d85835a9eaf5808bb",
+      "byte_identical": true,
+      "entry_point": "run_segment_warp",
+      "threads_per_chain": 32
+    },
+    "Makefile": {
+      "packaged_sha256": "83363f7bdf59398dd07bb665c17413fd6f173ec233c9fe6441ec399fa81ff538",
+      "adaptation": "Two native executables, ../common and bundled metal-cpp includes, absolute compile-time literal kernel paths, explicit Darwin build prerequisite; original O2 flags retained. Boost multiprecision headers remain an external dependency; BOOST_INC defaults to /opt/homebrew/include and may be overridden, e.g. /usr/local/include on Intel Homebrew. Requires an Apple SDK compatible with the vendored metal-cpp headers. Relocating the source tree after building requires rebuilding to refresh the literal paths."
+    }
+  },
+  "native_interface": {
+    "positional": "L beta rho rho1 rho2 SWEEPS CHAINS GPU MODE EQUIL [STATE_RAW]",
+    "options": ["--seed U64", "--start-sweep U64", "--history-every POSITIVE", "--max-history-samples POSITIVE"],
+    "persistent_modes": ["nonlocal", "local-colored"],
+    "physical_modes": ["local", "nonlocal", "both"],
+    "L_range_inclusive": [4, 21],
+    "colored_L": 21,
+    "fallback": "Unsupported L, missing Metal support and non-GPU requests fail; no silent CPU fallback.",
+    "continuation": "STATE_RAW is the packed chain-major byte state. Reuse seed and chain ordering; pass the preceding next_sweep as --start-sweep, normally with EQUIL=0. Equilibration uses [start_sweep,start_sweep+equil); production starts at start_sweep+equil. NPZ next_sweep=start_sweep+equil+sweeps is exclusive. Existing history_sweeps and snapshot_sweeps stay production-relative; existing fields and mode integers are retained.",
+    "physical_counter_limit": "start_sweep+equil+sweeps <= 4294967296. The unchanged kernel takes uint start and computes uint sw; the final executed sweep may be 4294967295, never 4294967296.",
+    "persistent_counter_limit": "start_sweep+equil+sweeps <= floor(UINT64_MAX/(N*factor)), factor=2 for nonlocal, factor=3 for local-colored. At L21 the respective exclusive next_sweep maxima are 995936943834874 and 663957962556583. This conservative host restriction prevents proposal-index arithmetic overflow in the unchanged ulong kernel.",
+    "energy_units": "Both native drivers write total lattice energy, represented as float32 integers, with no division by nocc or N. Physical cpuSegment uses float(e); gpuSegment uses float(ep[chain*count+j]) from the integer device sum. Only acceptance arrays are normalized by N.",
+    "physical_zero_and_short_production": "Static inspection: runSeg dispatches only while count>0, with positive chunks min(count,4096), so production below 4096 is not skipped and count=0 cannot allocate zero-length device histories. For production sweeps=0, snapshot/history arrays are empty; final and equilibrated retain the full post-equilibration state. asBytes now explicitly returns an empty vector for zero-byte payloads to avoid arithmetic on possibly null empty-vector data pointers. No simulation or binary check was performed.",
+    "history_limits": "History cadence is max(history_every,ceil(sweeps/max_history_samples)); final sweep is included. Persistent samples must fit uint32. Physical temporary GPU histories remain bounded to 4096 sweeps per chain, independently of retained history cadence. Legacy stored ZIP32 NPZ and snapshot buffers remain memory/file-size limits; this driver is not a streaming campaign writer."
+  },
+  "scientific_semantics": {
+    "nonlocal": "Code is authoritative, not preserved stale kernel/README wording: draw two independent uniform sites with exact Lemire rejection; equal-site draws are invalid counted proposals, not redrawn distinct pairs; equal-type swaps are no-ops. N proposal slots per nonlocal sweep. Exact-cut re-proposal preserves the sequential counter stream and exact 64-bit EFMA thresholds.",
+    "physical_local": "N random-site/random-nearest-neighbor-direction proposals per sweep, preserving the original reference ordering and RNG mapping. The physical both mode runs nonlocal then local.",
+    "colored_local": "Explicitly nonphysical trajectory at L21. A sweep chooses one axis and forward/reverse order of 21 edge colors, with N total attempts and disjoint affected sets within each color. Stationarity is the intended invariant, not equality of trajectories, autocorrelation times or kinetic observables. Never substitute for the physical local default. Native meta mode=2 is retained for compatibility, so the facade must retain its explicit local-colored mode/backend identity.",
+    "colored_rng_and_time_units": "The colored sweep key is mix64(seed XOR chain*0x9e3779b97f4a7c15 XOR absolute_sweep*0xd1342543de82ef95 XOR 0x6c6f63616c); axis=key%3, reverse=(key>>32)&1. Endpoints are deterministic within each axis/color, unlike physical site's Lemire N draw followed by Lemire 6 direction draw. Colored acceptance starts at the first word of efKey(seed,chain,(3*absolute_sweep+axis)*N+color*(N/21)+t,local=1), without endpoint RNG draws. Its N attempts per sweep are one structured single-axis color pass, not N independent physical random-edge attempts. The sweep counter provides continuation, not a conversion to physical kinetic time; acceptance rates, relaxation curves and autocorrelation times cannot be compared as identical physical clocks."
+  },
+  "common_header_static_compatibility": {
+    "efma_sha256": "7bb85370e530fd0e85e217462457b2114a6cd6b59a6ffbc0549e8a9f1665629c",
+    "lattice_sha256": "2aeaeb24ae4a7b407007e9f263839bdaa29e5f1fc0ca3c2fbc435c97289c9150",
+    "sweeps_sha256": "e79be5eb8c92d013f13e6f4065da2f9650cbfb90fc584e7fd355cfe5ece5aa34",
+    "finding": "The frozen EFMA header is byte-identical to old opt and opt2: Threshold is two uint32 hi/lo words and makeThresholds accepts decimal beta text. Both hosts use only Lattice constructor, N, st, init and energy, all present in frozen headers. Initialization uses the same SplitMix shuffle, species assignment and six-neighbor bit encoding; packSite preserves the old byte expression. Neighbor/coordinate tables use the same direction order and packed coordinates. Common CPU sweep signatures match the hosts. Removed old Lattice helper methods are not host callsites. Metal's proposal/energy routines live in the byte-identical device sources, not the replaced CPU implementation. This is static compatibility inspection, not a newly executed gate."
+  },
+  "recorded_evidence": {
+    "persistent_rates": {
+      "origin": "solid-opt2/bench/scale.csv",
+      "bundled": "evidence/scale-opt2.csv",
+      "sha256": "c4ef519b45d04eeb3862da019d4b329f7c20ea5c222cf1567bd9c23d6d3bcf75",
+      "settings": {"L": 21, "beta": "2.0", "rho": "0.75", "rho1": "0.30", "rho2": "0.45", "seed": "1", "warmup_sweeps": 200, "timed_sweeps": 1000, "chains": [8, 64, 128, 256]},
+      "nonlocal_aggregate_attempts_per_second": [114865116.279070, 381160128.617363, 436775239.498895, 458217240.046386],
+      "colored_local_aggregate_attempts_per_second": [223156626.506024, 592704000.000000, 619659174.072138, 603875700.458482],
+      "hardware_limit": "Exact Apple device model is not encoded in this CSV; these are historical source measurements, not portable guarantees."
+    },
+    "physical_rates": {
+      "source": "solid-opt/README.md:56-67",
+      "settings": "L21, beta 2.0, 1000 sweeps, 8 chains",
+      "local_aggregate_attempts_per_second_approx": 42000000,
+      "local_per_chain_attempts_per_second_approx": 5200000,
+      "qualification": "Rounded README evidence only; no physical-local scale CSV was found in the assigned source directories."
+    },
+    "exact_gates": [
+      {"source": "solid-opt/README.md:36-50", "record": "Reference exact gate recorded; high-beta L21 beta2.5 160000 sweeps 8 chains: CPU116s, Metal172s, all compared fields equal."},
+      {"source": "solid-opt2/README.md:35-55", "record": "Exact gate recorded on schedule-identical paths; high-beta L21 beta2.5 160000 sweeps 8 chains: CPU88.3s, Metal74.8s, nonlocal fields bitwise equal. Colored L21 local/both are excluded from exact trajectory claims."}
+    ],
+    "colored_stationarity_gate": {
+      "source": "solid-opt2/README.md:44-52; solid-opt2/gate/README.md",
+      "settings": "L21, beta2.0, mode both, 64 chains/backend, alpha0.01",
+      "joint_p": 0.692,
+      "record": "Both split stationarity diagnostics recorded as passing.",
+      "limits": "Historical distributional comparison at this bath/mode, not a universal stationarity proof or physical-trajectory/kinetics certification; it does not by itself certify standalone local-only behavior at arbitrary beta. Raw campaign NPZ and gate stdout are described as local-only in the original README and are not bundled here. No reruns were performed."
+    }
+  },
+  "vendored_metal_cpp": {
+    "origin": "third_party/metal-cpp/{Metal,Foundation,LICENSE.txt} at source_snapshot_commit",
+    "destination": "../third_party/metal-cpp",
+    "unchanged": true,
+    "license": "../third_party/metal-cpp/LICENSE.txt",
+    "license_sha256": "f4e92c7fe2aa066e294c0da9d08683dc9fb741ee6e6debbfad99a0c96e07c1f2",
+    "tree_manifest_sha256": "f28ed8be2b94541639776837f6a905504fb6bf3ee6039c9b6bdc97327f74d081",
+    "tree_manifest_algorithm": "From vendored metal-cpp directory: sha256sum Metal/*.hpp Foundation/*.hpp LICENSE.txt | sha256sum (shell lexical expansion). QuartzCore, MetalFX, SingleHeader and vendor README are not needed by these hosts."
+  },
+  "packaging_qualification": "Only source inspection, unchanged-source copying and SHA256 provenance collection performed. No builds, native runs, correctness/statistical suites, simulations, benchmarks, formatters or paid compute were invoked. Host changes are start-sweep plumbing, bounded honest counter ranges, metadata, explicit mode/backend rejection, literal kernel paths and a physical-host zero-byte serialization guard."
+}
